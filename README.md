@@ -1,6 +1,6 @@
 # Voice Commerce AI Agent
 
-> Phase 6 — real Shopify provider behind the commerce seam (mock default, Admin API when configured).
+> Production-style voice commerce assistant — all 7 phases complete. Mock commerce + browser voice run with zero API keys.
 
 ## 1. Project Overview
 Voice-first e-commerce assistant: voice → STT (browser, Phase 1) → conversation + keyword intent → mock commerce tools → voice-optimized reply → TTS (browser).
@@ -24,7 +24,8 @@ Customers prefer speaking (incl. Hinglish) over typing filters. LLM must underst
 - [x] Honest stock turns: out-of-stock sizes (e.g. P100 size 10) get clear Hinglish/English replies with alternatives
 - [x] Observability: PII-free `voice_turn` structured logs (`conversation_id, intent, tool_called, *_latency_ms, success`) + in-memory rolling stats at `GET /api/voice/stats` (avg/p50/p95 per stage, by-tool counts)
 - [x] Shopify seam: extended `CommerceProvider` (orders/customers/discounts); pricing + orders + discount-matching now read through the provider; real `ShopifyProvider` (Admin REST, see §12) auto-selected on credentials, mock otherwise
-- [ ] Production quality pass (Phase 7: auth, Docker, CI, screenshots)
+- [x] Production quality: `x-api-key` gate on ops endpoints, Dockerfiles + compose (client nginx + server + mysql), CI workflow, `trust proxy`, per-route voice quota, security audit (§14)
+- [ ] Live verification with cloud keys / real Shopify store (needs credentials)
 
 ## 4. Architecture
 ```mermaid
@@ -87,16 +88,16 @@ Setup: create a Shopify dev store → Apps → custom app with `read_products`, 
 Browser-first: mic → Web Speech API (`hi-IN`), replies via `speechSynthesis` speaking server-optimized `voiceText`. Server seams in `services/speech/`: `STTProvider` (Deepgram Nova / Whisper, selected by `STT_PROVIDER` + key) and `TTSProvider` (ElevenLabs multilingual, `TTS_PROVIDER=elevenlabs` + key). `optimizeForSpeech()` is deterministic and unit-tested: spoken currency (₹2,499 → "2,499 rupees"/"rupaye"), strips markdown/links/emoji, ≤3 sentences / 60 words. Set `STT_PROVIDER`/`TTS_PROVIDER` + keys in `.env` (see `.env.example`); without keys the app runs fully on browser voice.
 
 ## 14. Security
-Helmet, CORS allowlist, 120 req/min rate-limit, Zod validation, 256kb JSON cap, generic error messages (no stack traces), `.env` never committed.
+Helmet headers, CORS allowlist (`CORS_ORIGIN`), global rate limit (120 req/min) + stricter voice quota (60 req/min, audio/LLM turns are expensive), `trust proxy` for accurate client IPs behind nginx, Zod validation on every input (message text ≤2000 chars, audio ≤2.5MB base64, JSON body ≤2MB), generic voice-safe error messages (no stack traces), PII-free logs, secrets only via env (`.env` never committed, `.env.example` documents all keys). Ops endpoints (`GET /api/voice/stats`) require `x-api-key` when `API_KEY` is set; demo endpoints stay open for local use. CI (`.github/workflows/ci.yml`) runs lint + build + tests on every push/PR.
 
 ## 15. Testing
-`npm test --workspace=server` (39 tests): health, search filters, invalid input, inventory shape, multi-turn context, order/inventory/price/details intents, latency meta, keyword extractor units, prompt rules, pricing (normal/discount/multi-qty/shipping-threshold/invalid), registry execution + validation, Gemini declaration parity, localization, orders/pricing REST, TTS optimizer units, transcribe 501 fallback, voice/respond pipeline + latency shape, details follow-up, out-of-stock honesty, stats aggregation, Shopify mapping/filter/error paths (stubbed fetch).
+`npm test --workspace=server` (40 tests): health, search filters, invalid input, inventory shape, multi-turn context, order/inventory/price/details intents, latency meta, keyword extractor units, prompt rules, pricing (normal/discount/multi-qty/shipping-threshold/invalid), registry execution + validation, Gemini declaration parity, localization, orders/pricing REST, TTS optimizer units, transcribe 501 fallback, voice/respond pipeline + latency shape, details follow-up, out-of-stock honesty, stats aggregation + API-key gating, Shopify mapping/filter/error paths (stubbed fetch).
 
 ## 16. Latency/Performance
 Every voice turn returns `latency: {sttMs, llmMs, toolMs, ttsMs, totalMs}` (browser-measured STT + server timings), rendered per assistant message. `GET /api/voice/stats` aggregates server-side stages (avg/p50/p95, by-tool counts, errors) over a 500-turn rolling window. Example offline turn: stt ~400ms (mic listen), llm ~0ms (keyword), tool ~2ms (sqlite), tts ~0ms (text optimize), total ~50ms + network. SQLite `busy_timeout=5000` guards concurrent turns. PII-free `voice_turn` logs carry the same fields for external aggregation.
 
 ## 17. Environment Variables
-See `.env.example`. Only `PORT`, `CORS_ORIGIN`, `DB_PROVIDER`, `SQLITE_PATH` needed for Phase 1.
+See `.env.example`. Local demo needs only `PORT`, `CORS_ORIGIN`, `DB_PROVIDER`, `SQLITE_PATH`. Optional upgrades: `GOOGLE_API_KEY` (Gemini), `STT_PROVIDER` + `DEEPGRAM_API_KEY`/`OPENAI_API_KEY`, `TTS_PROVIDER=elevenlabs` + keys, `SHOPIFY_*` (real store), `API_KEY` (protects `/api/voice/stats`), `MYSQL_*` with `DB_PROVIDER=mysql`.
 
 ## 18. Local Setup
 ```bash
@@ -106,10 +107,14 @@ npm run dev --workspace=client  # :5173
 # MySQL (optional): docker compose up -d, DB_PROVIDER=mysql npm run dev --workspace=server
 npm test --workspace=server
 ```
+Docker (needs Docker Engine; not verified on machines without it):
+```bash
+docker compose up --build  # client :8080 (nginx, /api proxied), server :3001
+```
 Try: "Mujhe running shoes chahiye" → "3000 ke andar, black ones".
 
 ## 19. Screenshots
-_To be added._
+_No screenshots committed — capture from the running app (`npm run dev --workspace=client`, Chrome for mic support): the voice card with mic states, an assistant turn with latency chips (`stt/llm/tool/tts/total`), and product cards. PRs adding `docs/screenshot-*.png` + links here are welcome._
 
 ## 20. Future Improvements
 Phase 4: cloud STT/TTS. Phase 5: TTS optimizer + latency dashboard. Phase 6: real Shopify. Phase 7: auth, Docker, CI.

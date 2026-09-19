@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
+import rateLimit from 'express-rate-limit';
 import { runStmt } from '../db/database.js';
 import { createSession } from '../conversation.js';
 import { processMessage } from '../services/conversationService.js';
@@ -9,18 +10,23 @@ import { getTTSProvider } from '../services/speech/tts.js';
 import { getLatencyStats } from '../services/speech/latencyStats.js';
 import { SpeechError } from '../services/speech/providers.js';
 import { logVoiceTurn } from '../services/logger.js';
+import { requireApiKey } from '../middleware/requireApiKey.js';
 
 export const voiceRouter = Router();
 
+// Audio + LLM turns are the most expensive operations: tighter quota than the global limiter.
+voiceRouter.use(rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false }));
+
 // Rolling server-side latency aggregates (see services/speech/latencyStats.ts).
-voiceRouter.get('/stats', (_req, res) => {
+// Gated by API key when API_KEY is set (ops endpoint).
+voiceRouter.get('/stats', requireApiKey, (_req, res) => {
   res.json(getLatencyStats());
 });
 
 // Cloud STT entry point. Without STT_PROVIDER + key this answers 501 so the
 // client uses browser SpeechRecognition instead (default Phase 4 mode).
 const transcribeSchema = z.object({
-  audioBase64: z.string().min(1).max(7_000_000),
+  audioBase64: z.string().min(1).max(2_500_000),
   mimeType: z.string().max(100).optional(),
   language: z.string().max(20).optional(),
 });

@@ -1,7 +1,12 @@
 node_modules/
 dist/
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
+data/
 .env
 client/dist/
 server/dist/

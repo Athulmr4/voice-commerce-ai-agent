@@ -73,4 +73,15 @@ describe('Phase 4 voice', () => {
     }
     expect(typeof s.body.byTool.searchProducts).toBe('number');
   });
+  it('stats endpoint requires api key when API_KEY is set', async () => {
+    process.env.API_KEY = 'test-secret';
+    try {
+      expect((await request(app).get('/api/voice/stats')).status).toBe(401);
+      const ok = await request(app).get('/api/voice/stats').set('x-api-key', 'test-secret');
+      expect(ok.status).toBe(200);
+      expect((await request(app).get('/api/voice/stats').set('x-api-key', 'wrong')).status).toBe(401);
+    } finally {
+      delete process.env.API_KEY;
+    }
+  });
 });
