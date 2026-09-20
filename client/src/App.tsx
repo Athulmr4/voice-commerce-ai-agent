@@ -35,6 +35,11 @@ export function App() {
     } catch { setState('Idle'); }
   }
 
+  function stopSpeak() {
+    try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
+    setState('Idle');
+  }
+
   async function send(text: string, sttMs = 0) {
     if (!text.trim()) return;
     setError('');
@@ -63,6 +68,8 @@ export function App() {
     const w = window as unknown as Record<string, any>;
     const SR = w.SpeechRecognition ?? w.webkitSpeechRecognition;
     if (!SR) { setError('Mic STT not supported in this browser — type instead.'); return; }
+    // Barge-in: stop any ongoing speech before listening.
+    try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
     if (state === 'Listening...') {
       try { (recogRef.current as any)?.stop?.(); } catch { /* ignore */ }
       return;
@@ -111,6 +118,7 @@ export function App() {
       {error && <div className="card">⚠️ {error}</div>}
       <div className="card row">
         <button className={`mic ${state === 'Listening...' ? 'listening' : ''}`} onClick={toggleMic} aria-label="speak">🎙️</button>
+        {state === 'Speaking...' && <button className="send" onClick={stopSpeak} aria-label="stop speaking">⏹ Stop</button>}
         <input type="text" placeholder="Type or speak… e.g. Show me running shoes under 3000" value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void send(input); }} />
         <button className="send" onClick={() => void send(input)}>Send</button>
       </div>
