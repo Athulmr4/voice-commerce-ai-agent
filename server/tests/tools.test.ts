@@ -8,8 +8,10 @@ import { executeTool, toolDefinitions } from '../src/tools/tools.js';
 import { GEMINI_TOOL_DECLARATIONS } from '../src/tools/geminiDeclarations.js';
 
 process.env.NODE_ENV = 'test';
-// Hermetic: conversation tests use the deterministic keyword path, never live Gemini.
+// Hermetic: conversation tests use the deterministic keyword path, never a live LLM.
 delete process.env.GOOGLE_API_KEY;
+delete process.env.GROQ_API_KEY;
+delete process.env.LLM_PROVIDER;
 
 
 describe('Phase 3 tools', () => {

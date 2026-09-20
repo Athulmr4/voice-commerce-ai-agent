@@ -84,7 +84,8 @@ export class GeminiProvider implements LLMProvider {
     const prompt = `You are a shopping assistant router. Call exactly one backend tool for the customer request below. Context: ${JSON.stringify({
       category: context.category ?? null, maxPrice: context.maxPrice ?? null,
       color: context.color ?? null, brand: context.brand ?? null, size: context.size ?? null,
-    })}. Recent turns:\n${history || '(none)'}\n\nCustomer: ${text}`;
+      productId: context.productId ?? null, recentProductIds: context.lastProductIds ?? [],
+    })}. When the customer refers to a previously shown item ("it", "these", "that one"), pass its id from recentProductIds as productId. Recent turns:\n${history || '(none)'}\n\nCustomer: ${text}`;
     const res = await withTimeout(model.generateContent(prompt));
     const calls = res.response.functionCalls();
     if (!calls || calls.length === 0) throw new Error('LLM returned no function call');

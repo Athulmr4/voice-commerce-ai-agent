@@ -6,8 +6,10 @@ import { getSTTProvider } from '../src/services/speech/stt.js';
 import { getTTSProvider } from '../src/services/speech/tts.js';
 
 process.env.NODE_ENV = 'test';
-// Hermetic: conversation tests use the deterministic keyword path, never live Gemini.
+// Hermetic: conversation tests use the deterministic keyword path, never a live LLM.
 delete process.env.GOOGLE_API_KEY;
+delete process.env.GROQ_API_KEY;
+delete process.env.LLM_PROVIDER;
 
 describe('Phase 4 voice', () => {
   it('optimizer speaks currency, strips markup, caps length', () => {

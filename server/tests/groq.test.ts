@@ -47,6 +47,19 @@ describe('Groq provider', () => {
     const r = await new GroqProvider('key').decideTool('Is it available in size 9?', { category: 'running shoes' });
     expect(r).toEqual({ name: 'checkInventory', args: { productId: 'P100', size: '9' } });
   });
+  it('decideTool includes recent product ids for follow-ups', async () => {
+    let sent = '';
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body: string }) => {
+      sent = init.body;
+      return {
+        ok: true, status: 200,
+        json: async () => ({ choices: [{ message: { tool_calls: [{ function: { name: 'checkInventory', arguments: '{"productId":"P107","size":"9"}' } }] } }] }),
+      };
+    }));
+    const r = await new GroqProvider('key').decideTool('Is it available in size 9?', { lastProductIds: ['P107'] });
+    expect(r).toEqual({ name: 'checkInventory', args: { productId: 'P107', size: '9' } });
+    expect(sent).toContain('P107');
+  });
   it('decideTool throws when the model makes no call', async () => {
     stubChat({ choices: [{ message: { content: 'hello' }, finish_reason: 'stop' }] });
     await expect(new GroqProvider('key').decideTool('Hi', {})).rejects.toBeInstanceOf(LLMUpstreamError);

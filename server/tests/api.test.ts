@@ -3,8 +3,10 @@ import request from 'supertest';
 import { app } from '../src/app.js';
 
 process.env.NODE_ENV = 'test';
-// Hermetic: conversation tests use the deterministic keyword path, never live Gemini.
+// Hermetic: conversation tests use the deterministic keyword path, never a live LLM.
 delete process.env.GOOGLE_API_KEY;
+delete process.env.GROQ_API_KEY;
+delete process.env.LLM_PROVIDER;
 
 
 describe('Phase 1 API', () => {

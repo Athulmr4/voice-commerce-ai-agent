@@ -65,7 +65,7 @@ export class GroqProvider implements LLMProvider {
   readonly name = 'groq';
   private model: string;
   private apiKey: string;
-  constructor(apiKey = process.env.GROQ_API_KEY ?? '', model = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile') {
+  constructor(apiKey = process.env.GROQ_API_KEY ?? '', model = process.env.GROQ_MODEL ?? 'openai/gpt-oss-120b') {
     this.apiKey = apiKey;
     this.model = model;
   }
@@ -91,7 +91,8 @@ export class GroqProvider implements LLMProvider {
     return `Prior conversation context (merged entities so far): ${JSON.stringify({
       category: context.category ?? null, maxPrice: context.maxPrice ?? null,
       color: context.color ?? null, brand: context.brand ?? null,
-    })}\nRecent turns:\n${history || '(none)'}`;
+      productId: context.productId ?? null, recentProductIds: context.lastProductIds ?? [],
+    })}\nWhen the customer refers to a previously shown item ("it", "these", "that one"), use its id from recentProductIds as productId.\nRecent turns:\n${history || '(none)'}`;
   }
 
   async extract(text: string, context: SessionContext): Promise<LLMExtraction> {

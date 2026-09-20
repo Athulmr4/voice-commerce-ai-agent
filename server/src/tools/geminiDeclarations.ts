@@ -5,7 +5,7 @@ import { SchemaType, type FunctionDeclaration } from '@google/generative-ai';
 export const GEMINI_TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: 'searchProducts',
-    description: 'Search the product catalog by category, price range, color, or brand.',
+    description: 'Search the product catalog by category, price range, color, or brand. Keep limit at 10 or below (default 3).',
     parameters: {
       type: SchemaType.OBJECT,
       properties: {
