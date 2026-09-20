@@ -1,12 +1,16 @@
+import type { MerchantLanguage } from '../merchants/merchants.js';
+
 // Deterministic TTS text optimization. Turns LLM/backend strings into
-// speakable English text: spoken currency, no markup or symbols, capped length.
-export function optimizeForSpeech(text: string): string {
+// speakable text: spoken currency, no markup or symbols, capped length.
+// Language-aware: Hinglish speaks "rupaye", English "rupees".
+export function optimizeForSpeech(text: string, lang: MerchantLanguage = 'en'): string {
+  const moneyWord = lang === 'hinglish' ? 'rupaye' : 'rupees';
   let out = text;
 
   // Currency: ₹2,499 / Rs. 2499 / INR 2499 -> "2,499 rupees"
-  out = out.replace(/(?:₹|Rs\.?|INR)\s?([\d,]+(?:\.\d+)?)/gi, '$1 rupees');
+  out = out.replace(/(?:₹|Rs\.?|INR)\s?([\d,]+(?:\.\d+)?)/gi, `$1 ${moneyWord}`);
   // Trailing-code prices like "2499/-" -> "2499 rupees"
-  out = out.replace(/\b([\d,]+)\s?\/-/g, '$1 rupees');
+  out = out.replace(/\b([\d,]+)\s?\/-/g, `$1 ${moneyWord}`);
 
   // Never read markup, links, or handles aloud
   out = out.replace(/https?:\/\/\S+/g, '');
@@ -38,7 +42,11 @@ export interface SpokenProduct {
 
 // Two-sentence spoken product summary for the "tell me more" details turn.
 // Currency stays numeric here; optimizeForSpeech() speaks it downstream.
-export function spokenProductSummary(p: SpokenProduct): string {
+export function spokenProductSummary(p: SpokenProduct, lang: MerchantLanguage = 'en'): string {
   const desc = (p.description ?? '').split(/\s+/).slice(0, 15).join(' ');
+  if (lang === 'hinglish') {
+    const attrs = [p.brand, p.color].filter(Boolean).join(', ');
+    return `${p.name} — ${attrs}, ₹${p.price.toLocaleString('en-IN')} ka hai. ${desc}. Size ya order ke baare mein pooch sakte hain.`;
+  }
   return `${p.name} by ${p.brand}${p.color ? ` in ${p.color}` : ''}, priced at ₹${p.price.toLocaleString('en-IN')}. ${desc}. Want to check a size?`;
 }

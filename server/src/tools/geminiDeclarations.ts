@@ -65,4 +65,16 @@ export const GEMINI_TOOL_DECLARATIONS: FunctionDeclaration[] = [
       required: ['productId'],
     },
   },
+  {
+    name: 'searchKnowledge',
+    description: 'Look up store policies and FAQs (shipping, returns, refunds, discounts, support).',
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        query: { type: SchemaType.STRING },
+        limit: { type: SchemaType.NUMBER },
+      },
+      required: ['query'],
+    },
+  },
 ];

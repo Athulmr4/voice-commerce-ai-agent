@@ -59,7 +59,7 @@ describe('Phase 4 voice', () => {
     expect(r.status).toBe(200);
     expect(r.body.conversationId).toBeTruthy();
     expect(r.body.voiceText).toMatch(/rupees/);
-    expect(r.body.meta.language).toBe('english');
+    expect(r.body.meta.language).toBe('en');
     expect(r.body.latency).toMatchObject({ sttMs: 420 });
     for (const k of ['llmMs', 'toolMs', 'ttsMs', 'totalMs']) {
       expect(typeof r.body.latency[k]).toBe('number');

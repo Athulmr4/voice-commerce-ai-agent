@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { getCommerceProvider } from '../services/commerce/index.js';
 import { calculatePrice } from '../services/pricing/pricing.js';
 import { getOrderStatus } from '../services/orders/orders.js';
+import { searchKnowledge } from '../services/knowledge/retriever.js';
 
 export interface ToolDefinition<T = unknown> {
   name: string;
@@ -37,6 +38,11 @@ const placeOrderSchema = z.object({
   size: z.string().optional(),
   quantity: z.number().int().min(1).max(99).default(1),
   discountCode: z.string().optional(),
+});
+
+const knowledgeSchema = z.object({
+  query: z.string().min(1).max(500),
+  limit: z.number().int().min(1).max(3).default(2),
 });
 
 export const toolDefinitions: ToolDefinition[] = [
@@ -85,6 +91,15 @@ export const toolDefinitions: ToolDefinition[] = [
     execute: async (args: unknown) => {
       const parsed = placeOrderSchema.parse(args) as { productId: string; size?: string; quantity: number; discountCode?: string };
       return getCommerceProvider().createOrder(parsed);
+    },
+  },
+  {
+    name: 'searchKnowledge',
+    description: 'Look up store policies and FAQs (shipping, returns, refunds, discounts, support). Use for policy questions, never for products/prices/stock.',
+    schema: knowledgeSchema,
+    execute: async (args: unknown) => {
+      const { query, limit } = knowledgeSchema.parse(args);
+      return searchKnowledge(query, limit);
     },
   },
 ];

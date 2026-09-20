@@ -1,4 +1,5 @@
 import { EXTRACTION_PROMPT, VOICE_PROMPT } from '../../prompts/voice.prompt.js';
+import { getMerchant } from '../merchants/merchants.js';
 import { toOpenAITools } from '../../tools/openaiTools.js';
 import type { LLMExtraction, LLMProvider, SessionContext } from './LLMProvider.js';
 
@@ -41,7 +42,7 @@ function safeParse(json: string): LLMExtraction | null {
     if (start < 0 || end < 0) return null;
     const o = JSON.parse(json.slice(start, end + 1)) as Record<string, unknown>;
     const intent = String(o.intent ?? 'unclear');
-    const valid = ['product_search', 'product_details', 'inventory_check', 'price_check', 'order_status', 'place_order', 'chitchat', 'unclear'];
+    const valid = ['product_search', 'product_details', 'inventory_check', 'price_check', 'order_status', 'place_order', 'knowledge', 'chitchat', 'unclear'];
     return {
       intent: (valid.includes(intent) ? intent : 'unclear') as LLMExtraction['intent'],
       entities: {
@@ -131,11 +132,15 @@ export class GroqProvider implements LLMProvider {
   }
 
   async reply(args: { text: string; extraction: LLMExtraction; context: SessionContext; toolSummary: string }): Promise<string> {
+    const merchant = getMerchant(args.context.merchantId);
+    const style = merchant.language === 'hinglish'
+      ? 'Respond naturally in Hinglish'
+      : 'Respond in English';
     const messages: ChatMessage[] = [
       { role: 'system', content: VOICE_PROMPT },
       {
         role: 'user',
-        content: `Respond in English.\nCustomer said: "${args.text}"\nBackend result (authoritative, describe only this): ${args.toolSummary}\nReply in 1-3 short spoken sentences with at most one question.`,
+        content: `${style}, in a ${merchant.tone} tone.\nCustomer said: "${args.text}"\nBackend result (authoritative, describe only this): ${args.toolSummary}\nReply in 1-3 short spoken sentences with at most one question.`,
       },
     ];
     const res = await this.chat({ messages });

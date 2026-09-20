@@ -1,3 +1,5 @@
+import type { MerchantLanguage } from '../merchants/merchants.js';
+
 export interface TranscribeInput {
   audioBase64: string;
   mimeType?: string;
@@ -26,6 +28,7 @@ export interface STTProvider {
 export interface SynthesizeInput {
   text: string;
   voice?: string;
+  language?: MerchantLanguage;
 }
 
 export interface Synthesis {

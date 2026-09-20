@@ -15,12 +15,12 @@ conversationsRouter.post('/', (_req, res) => {
   res.status(201).json({ conversationId: id });
 });
 
-const msgSchema = z.object({ text: z.string().min(1).max(2000) });
+const msgSchema = z.object({ text: z.string().min(1).max(2000), merchantId: z.string().max(64).optional() });
 
 conversationsRouter.post('/:id/messages', async (req, res, next) => {
   try {
-    const { text } = msgSchema.parse(req.body);
-    const result = await processMessage(req.params.id, text);
+    const { text, merchantId } = msgSchema.parse(req.body);
+    const result = await processMessage(req.params.id, text, { merchantId });
     logVoiceTurn({
       conversation_id: req.params.id, intent: result.intent, tool_called: result.meta.tool,
       llm: result.meta.llm, llm_latency_ms: result.meta.llmLatencyMs,

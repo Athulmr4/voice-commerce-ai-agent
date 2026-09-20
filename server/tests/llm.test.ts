@@ -30,7 +30,7 @@ describe('Phase 2 LLM layer', () => {
     expect(m).toMatchObject({ category: 'running shoes', maxPrice: 3000, color: 'black' });
   });
   it('prompts encode voice rules', () => {
-    for (const rule of ['Never invent', 'Never calculate prices', 'one question', 'English-only']) {
+    for (const rule of ['Never invent', 'Never calculate prices', 'one question', 'merchant']) {
       expect(SYSTEM_PROMPT + VOICE_PROMPT).toMatch(new RegExp(rule, 'i'));
     }
   });

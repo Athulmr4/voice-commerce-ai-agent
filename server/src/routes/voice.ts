@@ -52,11 +52,12 @@ const respondSchema = z.object({
   conversationId: z.string().uuid().optional(),
   voice: z.string().max(100).optional(),
   sttLatencyMs: z.number().nonnegative().optional(),
+  merchantId: z.string().max(64).optional(),
 });
 
 voiceRouter.post('/respond', async (req, res, next) => {
   try {
-    const { text, conversationId, voice, sttLatencyMs } = respondSchema.parse(req.body);
+    const { text, conversationId, voice, sttLatencyMs, merchantId } = respondSchema.parse(req.body);
     const t0 = Date.now();
     let cid = conversationId;
     if (!cid) {
@@ -64,7 +65,7 @@ voiceRouter.post('/respond', async (req, res, next) => {
       runStmt('INSERT INTO conversations (id,created_at) VALUES (?,?)', [cid, new Date().toISOString()]);
       createSession(cid);
     }
-    const result = await processMessage(cid, text);
+    const result = await processMessage(cid, text, { merchantId });
 
     const tTts = Date.now();
     // Cloud TTS failure must never kill the turn: fall back to browser TTS
@@ -72,7 +73,10 @@ voiceRouter.post('/respond', async (req, res, next) => {
     let synth;
     let ttsFallback = false;
     try {
-      synth = await getTTSProvider().synthesize({ text: result.reply, voice });
+      synth = await getTTSProvider().synthesize({
+        text: result.reply, voice,
+        language: result.meta.language === 'hinglish' ? 'hinglish' : 'en',
+      });
     } catch (e) {
       if (!(e instanceof SpeechError)) throw e;
       logger.warn({ code: e.code, detail: e.message }, 'cloud tts failed, browser fallback');

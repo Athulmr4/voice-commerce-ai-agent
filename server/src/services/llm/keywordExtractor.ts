@@ -2,7 +2,8 @@ import type { LLMExtraction, LLMProvider, SessionContext } from './LLMProvider.j
 
 // Deterministic fallback used when no LLM key is configured or the LLM call fails.
 // Also serves as the baseline for tests. Keeps the app runnable offline.
-// English-only: all requests are treated as English, all replies are English.
+// Input matching is tolerant (English + common Hinglish commerce words);
+// the OUTPUT language always comes from the merchant profile, never detection.
 export function extractFilters(
   text: string,
   prev: SessionContext,
@@ -15,7 +16,7 @@ export function extractFilters(
   else if (/shoe/.test(t) && !next.category) next.category = 'running shoes';
   const m =
     t.match(/(?:under|below|within|around)\D{0,10}(\d[\d,]*)/) ??
-    t.match(/(\d[\d,]*)\s*(?:rupees|rs|inr)/);
+    t.match(/(\d[\d,]*)\s*(?:ke andar|tak|rupees|rs|inr)/);
   if (m) next.maxPrice = Number(m[1].replace(/,/g, ''));
   for (const c of ['black', 'white', 'red', 'blue', 'silver', 'grey', 'gray']) {
     if (t.includes(c)) { next.color = c === 'gray' ? 'grey' : c; break; }
@@ -35,17 +36,18 @@ export class KeywordProvider implements LLMProvider {
     const order = text.match(/\b([A-Z]{2}\d{4,})\b/);
     const merged = extractFilters(text, context);
         let intent: LLMExtraction['intent'] = 'product_search';
-    if (order || /order status|order-status|where.*(order|package)|deliver|track.*order/.test(t)) intent = 'order_status';
+    if (order || /order status|order-status|where.*(order|package)|deliver.*order|order.*deliver|track.*order/.test(t)) intent = 'order_status';
+    else if (/return|refund|shipping|exchange|warranty|contact|support|policy|charges|deliver/.test(t)) intent = 'knowledge';
     else if (context.pendingOrder && /^(no|nope|cancel|don't|dont|stop)\b/.test(t)) intent = 'place_order';
     else if (/buy|place (the|my) order|order it|checkout|book it|confirm (the|my) order|proceed to (buy|pay)/.test(t)) intent = 'place_order';
-    else if (context.pendingOrder && /^(yes|yeah|yep|ok|sure|confirm|do it|place it|go ahead)\b/.test(t)) intent = 'place_order';    else if (/detail|specification|about (this|that|it)|tell me more/.test(t)) intent = 'product_details';
-    else if (/^(yes|yeah|yep|ok|sure)\b/.test(t) && context.lastProductIds?.length) intent = 'product_details';
+    else if (context.pendingOrder && /^(yes|yeah|yep|ok|sure|confirm|do it|place it|go ahead|haan|karo)\b/.test(t)) intent = 'place_order';    else if (/detail|specification|about (this|that|it)|tell me more|batao|sunao/.test(t)) intent = 'product_details';
+    else if (/^(yes|yeah|yep|ok|sure|haan|ha+)\b/.test(t) && context.lastProductIds?.length) intent = 'product_details';
     // "cheapest" is a comparison question about known results, not a price calculation.
     // (Must precede price_check: "cheapest" contains "cheap".)
     else if (/cheapest|lowest.price|least expensive/.test(t) && context.lastProductIds?.length) intent = 'product_details';
     else if (/available|stock|size/.test(t) && (merged.category || merged.size)) intent = 'inventory_check';
     else if (/total|how much|price of|cost of|discount|with \w+\d+/.test(t)) intent = 'price_check';
-    else if (/^(hi|hello|hey|thanks|thank you|bye)\b/.test(t)) intent = 'chitchat';
+    else if (/^(hi|hello|hey|namaste|thanks|thank you|bye)\b/.test(t)) intent = 'chitchat';
     else if (!merged.category && merged.maxPrice == null) intent = 'unclear';
     return {
       intent,

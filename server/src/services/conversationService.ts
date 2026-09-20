@@ -6,7 +6,10 @@ import { getCommerceProvider } from './commerce/index.js';
 import { executeTool } from '../tools/tools.js';
 import { PricingError } from './pricing/pricing.js';
 import { OrderError } from './orders/orders.js';
-import { renderTemplate, formatINR } from './localization/localization.js';
+import { formatINR } from './localization/localization.js';
+import { say } from './localization/languagePacks.js';
+import type { MerchantLanguage } from './merchants/merchants.js';
+import { getMerchant } from './merchants/merchants.js';
 import { recordTurn } from './speech/latencyStats.js';
 import { spokenProductSummary } from './speech/optimizer.js';
 import { logger } from './logger.js';
@@ -19,12 +22,19 @@ export interface MessageResult {
   products: unknown;
   filters: Record<string, string | number | undefined>;
   intent: string;
-  meta: { tool: string; toolLatencyMs: number; llmLatencyMs: number; llm: string; language: string; success: boolean };
+  meta: { tool: string; toolLatencyMs: number; llmLatencyMs: number; llm: string; language: string; merchantId: string; success: boolean };
 }
 
-export async function processMessage(conversationId: string, text: string): Promise<MessageResult> {
+export async function processMessage(
+  conversationId: string,
+  text: string,
+  opts: { merchantId?: string } = {},
+): Promise<MessageResult> {
   const tStart = Date.now();
   const session = getSession(conversationId);
+  if (opts.merchantId) session.merchantId = opts.merchantId;
+  const merchant = getMerchant(session.merchantId);
+  const lang: MerchantLanguage = merchant.language;
   getSqlite(); // ensure migrated + seeded
   runStmt('INSERT INTO conversation_messages (id,conversation_id,role,text,created_at) VALUES (?,?,?,?,?)',
     [randomUUID(), conversationId, 'user', text, new Date().toISOString()]);
@@ -116,16 +126,16 @@ export async function processMessage(conversationId: string, text: string): Prom
   const toolSummary = summarizeTool(tool, toolResult);
 
   // Voice reply: LLM phrasing when a cloud provider served the turn,
-  // deterministic English templates otherwise.
+  // deterministic merchant-language templates otherwise.
   let reply: string;
   if (serving && extraction) {
     try {
       reply = await serving.reply({ text, extraction, context: session, toolSummary });
     } catch {
-      reply = fallbackReply(tool, toolResult);
+      reply = fallbackReply(tool, toolResult, lang);
     }
   } else {
-    reply = fallbackReply(tool, toolResult);
+    reply = fallbackReply(tool, toolResult, lang);
   }
 
   runStmt('INSERT INTO conversation_messages (id,conversation_id,role,text,created_at) VALUES (?,?,?,?,?)',
@@ -145,12 +155,12 @@ export async function processMessage(conversationId: string, text: string): Prom
       color: session.color, brand: session.brand, size: session.size, productId: session.productId,
     },
     intent,
-    meta: { tool, toolLatencyMs, llmLatencyMs, llm: llmUsed, language: 'english', success },
+    meta: { tool, toolLatencyMs, llmLatencyMs, llm: llmUsed, language: lang, merchantId: merchant.id, success },
   };
 }
 
 function toolToIntent(tool: string): string {
-  return { searchProducts: 'product_search', getProductDetails: 'product_details', checkInventory: 'inventory_check', calculatePrice: 'price_check', getOrderStatus: 'order_status', placeOrder: 'place_order' }[tool] ?? 'unclear';
+  return { searchProducts: 'product_search', getProductDetails: 'product_details', checkInventory: 'inventory_check', calculatePrice: 'price_check', getOrderStatus: 'order_status', placeOrder: 'place_order', searchKnowledge: 'knowledge' }[tool] ?? 'unclear';
 }
 
 // Derive the session update from a function-calling decision so Path A costs
@@ -238,6 +248,11 @@ async function routeIntent(text: string, extraction: LLMExtraction, session: Ses
       if (e instanceof OrderError) return { tool: 'getOrderStatus', args: { orderId }, result: { error: e.code, orderId } };
       throw e;
     }
+  }
+
+  if (extraction.intent === 'knowledge') {
+    const result = await executeTool('searchKnowledge', { query: text, limit: 2 });
+    return { tool: 'searchKnowledge', args: { query: text }, result };
   }
 
   if (extraction.intent === 'product_details') {
@@ -379,6 +394,11 @@ function summarizeTool(tool: string, result: unknown): string {
     const p = r as { name?: string; brand?: string; price?: number };
     return p.name ? `Product ${p.name} by ${p.brand}, price ${p.price}.` : 'Product details lookup returned nothing.';
   }
+  if (tool === 'searchKnowledge') {
+    const hits = (result ?? []) as { title?: string; text?: string; score?: number }[];
+    if (hits.length === 0) return 'Knowledge lookup returned nothing.';
+    return `Policy ${hits[0].title}: ${hits[0].text}`;
+  }
   if (tool === 'placeOrder') {
     if (r.cancelled) return 'Order cancelled.';
     if (r.pending) return `Order pending confirmation: ${r.quantity}x ${r.productName ?? r.productId} total ${r.total}.`;
@@ -389,59 +409,68 @@ function summarizeTool(tool: string, result: unknown): string {
   return `searchProducts returned ${(result as unknown[]).length} items: ${list}.`;
 }
 
-function fallbackReply(tool: string, result: unknown): string {
+function fallbackReply(tool: string, result: unknown, lang: MerchantLanguage): string {
   const r = (result ?? {}) as Record<string, unknown>;
-  const t = (template: string, vars: Record<string, string | number>): string =>
-    renderTemplate(template, vars).text;
 
   if (tool === 'getOrderStatus') {
-    if (r.error) return "Sorry, I couldn't find that order. Could you check the id?";
-    return t('Your order {{order_id}} is {{order_status}}, worth {{order_total}}. Expected {{estimated_delivery}}.', {
+    if (r.error) return say(lang, 'orderNotFound');
+    return say(lang, 'orderStatus', {
       order_id: String(r.orderId), order_status: String(r.status).toLowerCase(),
       order_total: formatINR(Number(r.total)), estimated_delivery: String(r.estimatedDelivery).toLowerCase(),
     });
   }
 
   if (tool === 'checkInventory') {
-    if (r.available) return t("Yes, it's available — {{quantity}} in stock. Want to order?", { quantity: Number(r.quantity) });
-    return 'Sorry, that size is currently out of stock. Want to try another size?';
+    if (!('available' in r)) return say(lang, 'invUnknown');
+    if (r.available) return say(lang, 'invAvailable', { quantity: Number(r.quantity) });
+    return say(lang, 'invOutOfStock');
   }
 
   if (tool === 'calculatePrice') {
-    if (r.error === 'INVALID_DISCOUNT') return 'Sorry, that discount code is not valid. Want the total without it?';
-    if (r.error) return "Sorry, I couldn't calculate the price. Which product did you mean?";
-    return t('Your total is {{total}} — {{quantity}} items, discount {{discount}}, shipping {{shipping}}. Shall I place the order?', {
+    if (r.error === 'INVALID_DISCOUNT') return say(lang, 'priceBadDiscount');
+    if (r.error) return say(lang, 'priceError');
+    return say(lang, 'priceTotal', {
       total: formatINR(Number(r.total)), quantity: Number(r.quantity),
       discount: formatINR(Number(r.discount)), shipping: formatINR(Number(r.shipping)),
     });
   }
 
   if (tool === 'getProductDetails') {
-    if (!r.name) return "Sorry, I couldn't pull up those details.";
+    if (!r.name) return say(lang, 'detailsMissing');
     return spokenProductSummary({
       name: String(r.name), price: Number(r.price), brand: String(r.brand ?? ''),
       color: (r.color as string | null) ?? null, description: String(r.description ?? ''),
-    });
+    }, lang);
   }
 
   if (tool === 'placeOrder') {
-    if (r.cancelled) return 'No problem, I cancelled that order. Anything else?';
+    if (r.cancelled) return say(lang, 'orderCancelled');
     if (r.pending) {
-      return t('I can place the order for {{quantity}} x {{product}} totalling {{total}}. Say yes to confirm, or no to cancel.', {
+      return say(lang, 'orderStage', {
         quantity: Number(r.quantity), product: String(r.productName ?? r.productId), total: formatINR(Number(r.total)),
       });
     }
-    if (r.error === 'OUT_OF_STOCK') return "Sorry, it just went out of stock. Want me to find an alternative?";
-    if (r.error) return "Sorry, I couldn't place that order. Want to try again?";
-    return t('Done! Your order {{order_id}} is confirmed, worth {{total}}. Expected in 3 days.', {
+    if (r.error === 'OUT_OF_STOCK') return say(lang, 'orderStockout');
+    if (r.error) return say(lang, 'orderFailed');
+    return say(lang, 'orderPlaced', {
       order_id: String(r.orderId), total: formatINR(Number(r.total)),
     });
   }
 
+  if (tool === 'searchKnowledge') {
+    const hits = (result ?? []) as { text?: string }[];
+    if (hits.length === 0 || !hits[0].text) return say(lang, 'knowledgeMissing');
+    const snippet = hits[0].text!.split('. ').slice(0, 2).join('. ').slice(0, 220);
+    return `${say(lang, 'knowledgeLead')}: ${snippet}`;
+  }
+
   const list = (result ?? []) as { price: number }[];
   if (list.length === 0) {
-    return "Hi! I'm your shopping assistant. What are you looking for today?";
+    return say(lang, 'greeting');
   }
   const cheapest = list[0]?.price ?? null;
-  return `I found ${list.length} option${list.length > 1 ? 's' : ''}. Cheapest is ${cheapest != null ? formatINR(cheapest) : 'unavailable'}. Want details?`;
+  return say(lang, 'searchSummary', {
+    count: list.length, plural: list.length > 1 ? 's' : '',
+    cheapest: cheapest != null ? formatINR(cheapest) : '',
+  });
 }

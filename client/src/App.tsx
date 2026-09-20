@@ -14,6 +14,7 @@ export function App() {
   const [state, setState] = useState<State>('Idle');
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
+  const [merchantId, setMerchantId] = useState('default');
   const recogRef = useRef<any>(null);
   const listenStart = useRef(0);
 
@@ -43,7 +44,7 @@ export function App() {
     try {
       const r = await fetch(`${API}/api/voice/respond`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, ...(convId ? { conversationId: convId } : {}), sttLatencyMs: sttMs }),
+        body: JSON.stringify({ text, ...(convId ? { conversationId: convId } : {}), sttLatencyMs: sttMs, merchantId }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error ?? 'Request failed');
@@ -68,7 +69,7 @@ export function App() {
     }
     const rec = new SR();
     recogRef.current = rec;
-    rec.lang = 'en-IN';
+    rec.lang = merchantId === 'demo_hinglish' ? 'hi-IN' : 'en-IN';
     setState('Listening...');
     listenStart.current = performance.now();
     rec.onresult = (e: any) => {
@@ -85,6 +86,13 @@ export function App() {
   return (
     <div className="wrap">
       <h2>Voice Commerce AI</h2>
+      <div className="row">
+        <label className="state" htmlFor="merchant">Merchant:</label>
+        <select id="merchant" value={merchantId} onChange={e => { setMerchantId(e.target.value); setConvId(null); setMsgs([{ role: 'assistant', text: e.target.value === 'demo_hinglish' ? 'Namaste! Main aapka shopping assistant hoon. Aap kya dhoondh rahe hain?' : "Hi! I'm your shopping assistant. What are you looking for today?" }]); setProducts([]); }}>
+          <option value="default">English store</option>
+          <option value="demo_hinglish">Hinglish store</option>
+        </select>
+      </div>
       <div className="state">{state}{convId ? '' : ' (connecting...)'}</div>
       {msgs.map((m, i) => (
         <div key={i} className="card"><b>{m.role === 'user' ? '👤' : '🤖'}</b> {m.text}
@@ -106,7 +114,7 @@ export function App() {
         <input type="text" placeholder="Type or speak… e.g. Show me running shoes under 3000" value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void send(input); }} />
         <button className="send" onClick={() => void send(input)}>Send</button>
       </div>
-      <div className="state">Press mic to speak in English.</div>
+      <div className="state">Press mic to speak{merchantId === 'demo_hinglish' ? ' (Hinglish supported)' : ' in English'}.</div>
     </div>
   );
 }

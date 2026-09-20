@@ -12,7 +12,10 @@ Customers prefer speaking over typing filters. LLM must understand intent but ne
 - [x] Product search API (category, price, color, brand, text)
 - [x] Product details + inventory endpoints
 - [x] Conversations with session context across turns (merged entities + last-10-turn history)
-- [x] LLM integration: `LLMProvider` seam — `GroqProvider` (`openai/gpt-oss-120b`, OpenAI-compatible JSON mode + function calling) when `GROQ_API_KEY` is set, `GeminiProvider` (`gemini-3.6-flash`) when `GOOGLE_API_KEY` is set, deterministic `KeywordProvider` fallback otherwise/offline. Selection: explicit `LLM_PROVIDER` (groq|gemini) pins one, otherwise the ordered chain Groq → Gemini → keyword (first success per stage wins). Each turn costs one LLM call; LLM errors are logged with provider + reason.
+- [x] LLM integration: `LLMProvider` seam — `GroqProvider` (`openai/gpt-oss-120b`, OpenAI-compatible JSON mode + function calling) when `GROQ_API_KEY` is set, `GeminiProvider` (`gemini-3.6-flash`) when `GOOGLE_API_KEY` is set, deterministic `KeywordProvider` fallback otherwise/offline. Ordered chain (Groq → Gemini → keyword, first success per stage wins; explicit `LLM_PROVIDER` pins one). Each turn costs one LLM call; LLM errors are logged with provider + reason.
+- [x] Merchant profiles: per-merchant variables (`services/merchants/`) — language (`en` default, `hinglish` opt-in), tone, greeting, STT locale — injected into prompts, reply templates, and TTS formatting. Reusable `languagePacks` keep prompt hygiene centralized instead of branching inline.
+- [x] Knowledge retrieval (RAG-lite): `searchKnowledge` tool over merchant policy docs with deterministic BM25-style TF-IDF scoring (no vector DB at this scale; swappable interface), answers grounded in retrieved chunks. Try: "What is your return policy?"
+- [x] Call-quality loop: `scripts/call_quality.py` (stdlib-only Python) reviews `voice_turn` JSONL logs — fallback rate, per-stage avg/p50/p95, top intents/tools, slowest turns to replay.
 - [x] Modular prompts: `prompts/system.prompt.ts` (identity + never-invent/never-calculate rules) + `prompts/voice.prompt.ts` (short, 1 question, English-only, TTS-optimized) + `EXTRACTION_PROMPT`
 - [x] Full tool-calling: `tools/tools.ts` registry (`searchProducts`, `getProductDetails`, `checkInventory`, `calculatePrice`, `getOrderStatus`, `placeOrder`), all Zod-validated; Groq/Gemini pick tool+args via function-calling, registry executes
 - [x] Checkout with mandatory confirmation: buy request → deterministic pricing → staged `pendingOrder` → explicit yes → `placeOrder` (stock decremented, order + items persisted). The pipeline structurally downgrades any unconfirmed model `placeOrder` to staging, so no prompt slip can order without a yes; topic switches void stale pendings. `POST /api/orders` exposes the same flow.
@@ -26,7 +29,20 @@ Customers prefer speaking over typing filters. LLM must understand intent but ne
 - [x] Observability: PII-free `voice_turn` structured logs (`conversation_id, intent, tool_called, *_latency_ms, success`) + in-memory rolling stats at `GET /api/voice/stats` (avg/p50/p95 per stage, by-tool counts)
 - [x] Shopify seam: extended `CommerceProvider` (orders/customers/discounts); pricing + orders + discount-matching now read through the provider; real `ShopifyProvider` (Admin REST, see §12) auto-selected on credentials, mock otherwise
 - [x] Production quality: `x-api-key` gate on ops endpoints, Dockerfiles + compose (client nginx + server + mysql), CI workflow, `trust proxy`, per-route voice quota, security audit (§14)
-- [ ] Live verification with cloud keys / real Shopify store (needs credentials)
+- [ ] Live verification with cloud keys / real Shopify store (needs credentials) — tracked in GitHub issue #1
+
+## 3b. Voice-AI role skill mapping
+| Role requirement | Where it lives |
+|---|---|
+| Voice-tailored prompts (sentence length, TTS punctuation) | `prompts/voice.prompt.ts`, `services/speech/optimizer.ts` (≤3 sentences/60 words, spoken currency, symbol stripping) |
+| Hinglish switching | `services/merchants/` profile + `localization/languagePacks.ts` (per-merchant `en`/`hinglish`, verified live) |
+| Per-merchant prompt variables | `MerchantProfile` (language, tone, greeting, STT locale) injected into prompts, templates, TTS |
+| Reusable conversation flows | intent router + `conversationService.ts` (search → details → stock → price → confirm → track), templates centralized in packs |
+| Shopify + REST data | `CommerceProvider` seam + `ShopifyProvider` (Admin REST, §12) |
+| Variable localization, price computation | `localization/` (`renderTemplate`, `formatINR`), `pricing/calc.ts` (deterministic breakup) |
+| Test-listen-iterate loop | `voice_turn` logs + `GET /api/voice/stats` + `scripts/call_quality.py` (fallback rate, p50/p95, replays) |
+| GenAI/LLM/RAG | Groq + Gemini function-calling; `searchKnowledge` retrieval-grounded policy answers (lexical TF-IDF, swappable) |
+| Python backend scripting | `scripts/call_quality.py` (stdlib-only log analytics) |
 
 ## 4. Architecture
 ```mermaid
@@ -92,7 +108,7 @@ Browser-first: mic → Web Speech API (`en-IN`), replies via `speechSynthesis` s
 Helmet headers, CORS allowlist (`CORS_ORIGIN`), global rate limit (120 req/min) + stricter voice quota (60 req/min, audio/LLM turns are expensive), `trust proxy` for accurate client IPs behind nginx, Zod validation on every input (message text ≤2000 chars, audio ≤2.5MB base64, JSON body ≤2MB), generic voice-safe error messages (no stack traces), PII-free logs, secrets only via env (`.env` never committed, `.env.example` documents all keys). Ops endpoints (`GET /api/voice/stats`) require `x-api-key` when `API_KEY` is set; demo endpoints stay open for local use. CI (`.github/workflows/ci.yml`) runs lint + build + tests on every push/PR.
 
 ## 15. Testing
-`npm test --workspace=server` (57 tests): health, search filters, invalid input, inventory shape, multi-turn context, order/inventory/price/details intents, latency meta, keyword extractor units, prompt rules, pricing (normal/discount/multi-qty/shipping-threshold/invalid), registry execution + validation, Gemini declaration parity, localization, orders/pricing REST, TTS optimizer units, transcribe 501 fallback, voice/respond pipeline + latency shape, details follow-up, out-of-stock honesty, stats aggregation + API-key gating, Shopify mapping/filter/error paths (stubbed fetch).
+`npm test --workspace=server` (64 tests): health, search filters, invalid input, inventory shape, multi-turn context, order/inventory/price/details/knowledge intents, latency meta, keyword extractor units, prompt rules, pricing (normal/discount/multi-qty/shipping-threshold/invalid), registry execution + validation, declaration parity (Gemini + OpenAI), localization + language packs, merchant profiles, orders/pricing REST, TTS optimizer units, transcribe 501 fallback, voice/respond pipeline + latency shape, details follow-up, out-of-stock honesty, checkout + confirmation guard, stats aggregation + API-key gating, Shopify mapping/filter/error paths (stubbed fetch).
 
 ## 16. Latency/Performance
 Every voice turn returns `latency: {sttMs, llmMs, toolMs, ttsMs, totalMs}` (browser-measured STT + server timings), rendered per assistant message. `GET /api/voice/stats` aggregates server-side stages (avg/p50/p95, by-tool counts, errors) over a 500-turn rolling window. Example offline turn: stt ~400ms (mic listen), llm ~0ms (keyword), tool ~2ms (sqlite), tts ~0ms (text optimize), total ~50ms + network. SQLite `busy_timeout=5000` guards concurrent turns. PII-free `voice_turn` logs carry the same fields for external aggregation.
