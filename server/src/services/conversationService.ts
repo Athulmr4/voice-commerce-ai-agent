@@ -9,6 +9,7 @@ import { OrderError } from './orders/orders.js';
 import { renderTemplate, formatINR } from './localization/localization.js';
 import { recordTurn } from './speech/latencyStats.js';
 import { spokenProductSummary } from './speech/optimizer.js';
+import { logger } from './logger.js';
 import { getLLMProvider, isLLMConfigured } from './llm/index.js';
 import { KeywordProvider } from './llm/keywordExtractor.js';
 import type { LLMExtraction, SessionContext } from './llm/LLMProvider.js';
@@ -39,6 +40,8 @@ export async function processMessage(conversationId: string, text: string): Prom
   let llmUsed = llm.name;
 
   // Path A — Gemini function-calling: model picks tool + args, registry executes.
+  // One LLM call per turn: intent/entities are derived from the tool decision,
+  // so no second extraction call is needed.
   if (isLLMConfigured() && llm.decideTool) {
     const t0 = Date.now();
     try {
@@ -48,10 +51,11 @@ export async function processMessage(conversationId: string, text: string): Prom
       toolResult = await executeTool(decision.name, decision.args);
       toolLatencyMs = Date.now() - tTool;
       tool = decision.name;
-      extraction = await llm.extract(text, session).catch(() => null);
-    } catch {
+      extraction = extractionFromDecision(decision.name, decision.args);
+    } catch (e) {
       llmLatencyMs = Date.now() - t0;
       llmUsed = 'keyword-fallback (llm-error)';
+      logger.warn({ err: (e as Error).message?.slice(0, 200) }, 'llm decideTool failed, keyword fallback');
     }
   }
 
@@ -60,9 +64,10 @@ export async function processMessage(conversationId: string, text: string): Prom
     const t0 = Date.now();
     try {
       extraction = await llm.extract(text, session);
-    } catch {
+    } catch (e) {
       extraction = await new KeywordProvider().extract(text, session);
       llmUsed = 'keyword-fallback (llm-error)';
+      logger.warn({ err: (e as Error).message?.slice(0, 200) }, 'llm extract failed, keyword fallback');
     }
     llmLatencyMs = Date.now() - t0;
     const tTool = Date.now();
@@ -118,6 +123,27 @@ export async function processMessage(conversationId: string, text: string): Prom
 
 function toolToIntent(tool: string): string {
   return { searchProducts: 'product_search', getProductDetails: 'product_details', checkInventory: 'inventory_check', calculatePrice: 'price_check', getOrderStatus: 'order_status' }[tool] ?? 'unclear';
+}
+
+// Derive the session update from a function-calling decision so Path A costs
+// exactly one LLM call (no follow-up extraction needed).
+function extractionFromDecision(tool: string, args: Record<string, unknown>): LLMExtraction {
+  const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+  const num = (v: unknown): number | null => (typeof v === 'number' ? v : null);
+  return {
+    intent: toolToIntent(tool) as LLMExtraction['intent'],
+    entities: {
+      category: str(args.category),
+      maxPrice: num(args.maxPrice),
+      minPrice: num(args.minPrice),
+      color: str(args.color),
+      brand: str(args.brand),
+      size: args.size != null ? String(args.size) : null,
+      productId: str(args.productId),
+      orderId: str(args.orderId),
+      quantity: num(args.quantity),
+    },
+  };
 }
 
 interface Routed { tool: string; args: Record<string, unknown>; result: unknown }

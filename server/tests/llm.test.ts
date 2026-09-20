@@ -19,6 +19,7 @@ describe('Phase 2 LLM layer', () => {
     expect((await p.extract('Hello', {})).intent).toBe('chitchat');
     expect((await p.extract('Show me running shoes under 3000', {})).intent).toBe('product_search');
     expect((await p.extract('Yes, tell me more', { lastProductIds: ['P100'] })).intent).toBe('product_details');
+    expect((await p.extract('Which of these is the cheapest?', { lastProductIds: ['P100'] })).intent).toBe('product_details');
     expect((await p.extract('Tell me more about this one', { category: 'running shoes' })).intent).toBe('product_details');
   });
   it('mergeEntities never drops context unless replaced', () => {

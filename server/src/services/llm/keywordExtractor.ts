@@ -38,8 +38,11 @@ export class KeywordProvider implements LLMProvider {
     if (order || /order|status|where.*(order|package)|deliver/.test(t)) intent = 'order_status';
     else if (/detail|specification|about (this|that|it)|tell me more/.test(t)) intent = 'product_details';
     else if (/^(yes|yeah|yep|ok|sure)\b/.test(t) && context.lastProductIds?.length) intent = 'product_details';
+    // "cheapest" is a comparison question about known results, not a price calculation.
+    // (Must precede price_check: "cheapest" contains "cheap".)
+    else if (/cheapest|lowest.price|least expensive/.test(t) && context.lastProductIds?.length) intent = 'product_details';
     else if (/available|stock|size/.test(t) && (merged.category || merged.size)) intent = 'inventory_check';
-    else if (/price|total|cost|discount|cheap/.test(t)) intent = 'price_check';
+    else if (/total|how much|price of|cost of|discount|with \w+\d+/.test(t)) intent = 'price_check';
     else if (/^(hi|hello|hey|thanks|thank you|bye)\b/.test(t)) intent = 'chitchat';
     else if (!merged.category && merged.maxPrice == null) intent = 'unclear';
     return {
