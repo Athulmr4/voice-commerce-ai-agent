@@ -6,6 +6,8 @@ import { getSTTProvider } from '../src/services/speech/stt.js';
 import { getTTSProvider } from '../src/services/speech/tts.js';
 
 process.env.NODE_ENV = 'test';
+// Isolated DB: each test file seeds a fresh in-memory database.
+process.env.SQLITE_PATH = ':memory:';
 // Hermetic: conversation tests use the deterministic keyword path, never a live LLM.
 delete process.env.GOOGLE_API_KEY;
 delete process.env.GROQ_API_KEY;

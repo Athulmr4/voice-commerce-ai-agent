@@ -1,8 +1,10 @@
 import type { Product, ProductFilters } from '../../types/commerce.js';
 import type {
   CommerceCustomer, CommerceDiscount, CommerceOrder, CommerceProvider,
+  CreateOrderInput, OrderConfirmation,
 } from './CommerceProvider.js';
 import { CommerceError } from './CommerceProvider.js';
+import { priceBreakup } from '../pricing/calc.js';
 
 // Real Shopify integration via the Admin REST API.
 // Enabled only when SHOPIFY_STORE_URL + SHOPIFY_ACCESS_TOKEN are set;
@@ -15,6 +17,8 @@ import { CommerceError } from './CommerceProvider.js';
 //   GET /orders.json?name=... /orders/{id}.json -> getOrder
 //   GET /customers/{id}.json            -> getCustomer
 //   GET /price_rules.json + discount_codes.json -> getDiscount
+//
+//   POST /draft_orders.json            -> createOrder (draft; stock decrements on completion, not creation)
 //
 // Mapping notes / limitations (also in README):
 // - Our Product.category <- Shopify product_type; color <- first "Color" option value or tag.
@@ -180,6 +184,50 @@ export class ShopifyProvider implements CommerceProvider {
       }
     }
     return null;
+  }
+  async createOrder(input: CreateOrderInput): Promise<OrderConfirmation> {
+    const { productId, size, quantity } = input;
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+      throw new CommerceError('INVALID_QUANTITY', 'Quantity must be an integer between 1 and 99', 400);
+    }
+    const product = await this.getProduct(productId);
+    if (!product) throw new CommerceError('INVALID_PRODUCT', `Unknown product ${productId}`, 404);
+    const data = await this.get<{ product: ShopifyProduct }>(`/products/${productId}.json`);
+    const variant = size
+      ? data.product.variants.find(v => [v.option1, v.option2, v.option3].some(o => o?.toLowerCase() === size.toLowerCase()))
+      : data.product.variants[0];
+    if (!variant) throw new CommerceError('OUT_OF_STOCK', 'Requested size is unavailable', 409);
+    if (variant.inventory_quantity < quantity) {
+      throw new CommerceError('OUT_OF_STOCK', `Only ${variant.inventory_quantity} left in stock`, 409);
+    }
+    let discountPercent = 0;
+    const discountCode = input.discountCode?.toUpperCase();
+    if (discountCode) {
+      const deal = await this.getDiscount(discountCode);
+      if (!deal) throw new CommerceError('INVALID_DISCOUNT', `Unknown discount code ${discountCode}`, 400);
+      discountPercent = deal.percent;
+    }
+    const { subtotal, discount, shipping, total } = priceBreakup(Number(variant.price), quantity, discountPercent);
+    const payload: Record<string, unknown> = {
+      draft_order: {
+        line_items: [{ variant_id: variant.id, quantity }],
+        ...(discountPercent > 0
+          ? { applied_discount: { value_type: 'percentage', value: String(discountPercent) } }
+          : {}),
+      },
+    };
+    const res = await fetch(`${this.base}/draft_orders.json`, {
+      method: 'POST',
+      headers: { 'X-Shopify-Access-Token': this.token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) throw new CommerceError('SHOPIFY_UPSTREAM', `Shopify draft order failed (${res.status})`, 502);
+    const created = (await res.json()) as { draft_order: { id: number; name: string } };
+    return {
+      orderId: created.draft_order.name ?? String(created.draft_order.id),
+      status: 'DRAFT', productId, productName: product.name, size, quantity, subtotal, discount, shipping, total,
+    };
   }
 }
 

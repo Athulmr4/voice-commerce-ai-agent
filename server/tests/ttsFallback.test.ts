@@ -18,6 +18,8 @@ vi.mock('../src/services/speech/tts.js', async (importOriginal) => {
 const { app } = await import('../src/app.js');
 
 process.env.NODE_ENV = 'test';
+// Isolated DB: each test file seeds a fresh in-memory database.
+process.env.SQLITE_PATH = ':memory:';
 // Hermetic: conversation tests use the deterministic keyword path, never a live LLM.
 delete process.env.GOOGLE_API_KEY;
 delete process.env.GROQ_API_KEY;

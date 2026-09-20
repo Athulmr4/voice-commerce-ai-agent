@@ -19,7 +19,7 @@ function safeParse(json: string): LLMExtraction | null {
     if (start < 0 || end < 0) return null;
     const o = JSON.parse(json.slice(start, end + 1)) as Record<string, unknown>;
     const intent = String(o.intent ?? 'unclear');
-    const valid = ['product_search', 'product_details', 'inventory_check', 'price_check', 'order_status', 'chitchat', 'unclear'];
+    const valid = ['product_search', 'product_details', 'inventory_check', 'price_check', 'order_status', 'place_order', 'chitchat', 'unclear'];
     return {
       intent: (valid.includes(intent) ? intent : 'unclear') as LLMExtraction['intent'],
       entities: {
@@ -81,11 +81,14 @@ export class GeminiProvider implements LLMProvider {
       tools: [{ functionDeclarations: GEMINI_TOOL_DECLARATIONS }],
     });
     const history = (context.history ?? []).slice(-6).map(h => `${h.role}: ${h.text}`).join('\n');
-    const prompt = `You are a shopping assistant router. Call exactly one backend tool for the customer request below. Context: ${JSON.stringify({
+    const pending = context.pendingOrder
+      ? ` There is an UNCONFIRMED order awaiting explicit confirmation: ${JSON.stringify(context.pendingOrder)}. If the customer confirms (yes/confirm/place it), call placeOrder with exactly these details. If they decline or change topic, do not call placeOrder.`
+      : '';
+    const prompt = `You are a shopping assistant router. Call exactly one backend tool for the customer request below. Only call placeOrder to confirm the UNCONFIRMED order above; for any new buy request call calculatePrice instead and the application will ask for confirmation. A number after the word "size" is the SIZE, never the quantity. Context: ${JSON.stringify({
       category: context.category ?? null, maxPrice: context.maxPrice ?? null,
       color: context.color ?? null, brand: context.brand ?? null, size: context.size ?? null,
       productId: context.productId ?? null, recentProductIds: context.lastProductIds ?? [],
-    })}. When the customer refers to a previously shown item ("it", "these", "that one"), pass its id from recentProductIds as productId. Recent turns:\n${history || '(none)'}\n\nCustomer: ${text}`;
+    })}.${pending} When the customer refers to a previously shown item ("it", "these", "that one"), pass its id from recentProductIds as productId. Recent turns:\n${history || '(none)'}\n\nCustomer: ${text}`;
     const res = await withTimeout(model.generateContent(prompt));
     const calls = res.response.functionCalls();
     if (!calls || calls.length === 0) throw new Error('LLM returned no function call');

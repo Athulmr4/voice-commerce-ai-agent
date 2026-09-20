@@ -51,4 +51,18 @@ export const GEMINI_TOOL_DECLARATIONS: FunctionDeclaration[] = [
     description: 'Look up an order by id.',
     parameters: { type: SchemaType.OBJECT, properties: { orderId: { type: SchemaType.STRING } }, required: ['orderId'] },
   },
+  {
+    name: 'placeOrder',
+    description: 'Place an order for a product and quantity. Only call after the customer confirmed.',
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        productId: { type: SchemaType.STRING },
+        size: { type: SchemaType.STRING },
+        quantity: { type: SchemaType.NUMBER },
+        discountCode: { type: SchemaType.STRING },
+      },
+      required: ['productId'],
+    },
+  },
 ];

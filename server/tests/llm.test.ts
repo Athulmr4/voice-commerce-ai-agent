@@ -4,6 +4,9 @@ import { mergeEntities } from '../src/conversation.js';
 import { SYSTEM_PROMPT } from '../src/prompts/system.prompt.js';
 import { VOICE_PROMPT } from '../src/prompts/voice.prompt.js';
 
+// Isolated DB: each test file seeds a fresh in-memory database.
+process.env.SQLITE_PATH = ':memory:';
+
 describe('Phase 2 LLM layer', () => {
   it('extracts category + budget + color with context merge', () => {
     const step1 = extractFilters('I need running shoes', {});

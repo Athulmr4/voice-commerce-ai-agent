@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS orders (
   subtotal REAL NOT NULL, discount REAL NOT NULL DEFAULT 0, shipping REAL NOT NULL DEFAULT 0,
   total REAL NOT NULL, estimated_delivery TEXT
 );
+CREATE TABLE IF NOT EXISTS order_items (
+  id TEXT PRIMARY KEY, order_id TEXT NOT NULL REFERENCES orders(id),
+  product_id TEXT NOT NULL REFERENCES products(id), size TEXT,
+  quantity INTEGER NOT NULL, unit_price REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS conversation_messages (
   id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id),
@@ -127,4 +132,13 @@ export function runStmt(text: string, params: unknown[] = []): void {
     return;
   }
   void getPool().execute(text, params as never[]);
+}
+
+// Awaited variant for multi-step writes (orders) where ordering matters on MySQL.
+export async function runStmtAsync(text: string, params: unknown[] = []): Promise<void> {
+  if (dbProvider() !== 'mysql') {
+    getSqlite().prepare(text).run(...(params as never[]));
+    return;
+  }
+  await getPool().execute(text, params as never[]);
 }

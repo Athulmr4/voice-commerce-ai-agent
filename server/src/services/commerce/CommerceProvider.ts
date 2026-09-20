@@ -17,6 +17,27 @@ export interface CommerceDiscount {
   percent: number;
 }
 
+export interface CreateOrderInput {
+  productId: string;
+  size?: string;
+  quantity: number;
+  discountCode?: string;
+  customerId?: string;
+}
+
+export interface OrderConfirmation {
+  orderId: string;
+  status: string;
+  productId: string;
+  productName: string;
+  size?: string;
+  quantity: number;
+  subtotal: number;
+  discount: number;
+  shipping: number;
+  total: number;
+}
+
 export class CommerceError extends Error {
   readonly code: string;
   readonly status: number;
@@ -36,4 +57,6 @@ export interface CommerceProvider {
   getCustomer(customerId: string): Promise<CommerceCustomer | null>;
   /** Returns null when the code does not exist (pricing service turns this into INVALID_DISCOUNT). */
   getDiscount(code: string): Promise<CommerceDiscount | null>;
+  /** Prices deterministically, decrements stock, persists the order. Throws on unknown product / bad code / insufficient stock. */
+  createOrder(input: CreateOrderInput): Promise<OrderConfirmation>;
 }

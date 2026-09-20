@@ -5,6 +5,8 @@ import { toOpenAITools } from '../src/tools/openaiTools.js';
 import { toolDefinitions } from '../src/tools/tools.js';
 
 process.env.NODE_ENV = 'test';
+// Isolated DB: each test file seeds a fresh in-memory database.
+process.env.SQLITE_PATH = ':memory:';
 // Hermetic: provider-selection tests manage keys explicitly below.
 delete process.env.GROQ_API_KEY;
 delete process.env.GOOGLE_API_KEY;

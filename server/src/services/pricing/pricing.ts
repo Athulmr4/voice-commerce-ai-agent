@@ -1,4 +1,5 @@
 import { getCommerceProvider } from '../commerce/index.js';
+import { priceBreakup } from './calc.js';
 
 // Deterministic business logic. The LLM must NEVER compute prices itself —
 // it calls the calculatePrice tool and describes the result.
@@ -19,10 +20,7 @@ export interface PriceBreakup {
   total: number;
 }
 
-export const FREE_SHIPPING_THRESHOLD = 20000;
-export const FLAT_SHIPPING = 100;
-
-const round2 = (n: number): number => Math.round(n * 100) / 100;
+export { FREE_SHIPPING_THRESHOLD, FLAT_SHIPPING } from './calc.js';
 
 export class PricingError extends Error {
   readonly code: string;
@@ -41,17 +39,13 @@ export async function calculatePrice(input: PriceInput): Promise<PriceBreakup> {
   const product = await getCommerceProvider().getProduct(productId);
   if (!product) throw new PricingError('INVALID_PRODUCT', `Unknown product ${productId}`);
   const unitPrice = product.price;
-  const subtotal = round2(unitPrice * quantity);
 
-  let discount = 0;
+  let discountPercent = 0;
   if (discountCode) {
     const deal = await getCommerceProvider().getDiscount(discountCode);
     if (!deal) throw new PricingError('INVALID_DISCOUNT', `Unknown discount code ${discountCode}`);
-    discount = round2((subtotal * deal.percent) / 100);
+    discountPercent = deal.percent;
   }
-  // Flat ₹100 shipping; free on orders (after discount) over ₹20,000.
-  // Matches the spec example: 5998 − 599.8 + 100 = 5498.2.
-  const shipping = subtotal - discount >= FREE_SHIPPING_THRESHOLD ? 0 : FLAT_SHIPPING;
-  const total = round2(subtotal - discount + shipping);
+  const { subtotal, discount, shipping, total } = priceBreakup(unitPrice, quantity, discountPercent);
   return { productId, unitPrice, quantity, subtotal, discount, discountCode, shipping, total };
 }

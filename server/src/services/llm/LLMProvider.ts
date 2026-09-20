@@ -1,4 +1,4 @@
-export type Intent = 'product_search' | 'product_details' | 'inventory_check' | 'price_check' | 'order_status' | 'chitchat' | 'unclear';
+export type Intent = 'product_search' | 'product_details' | 'inventory_check' | 'price_check' | 'order_status' | 'place_order' | 'chitchat' | 'unclear';
 
 export interface SessionContext {
   category?: string;
@@ -10,6 +10,8 @@ export interface SessionContext {
   productId?: string;
   /** Top product ids from the last successful search/details call. Enables "tell me more" follow-ups. */
   lastProductIds?: string[];
+  /** Unconfirmed order awaiting an explicit yes. Never executed without confirmation. */
+  pendingOrder?: { productId: string; size?: string; quantity: number; discountCode?: string; total?: number };
   history?: { role: 'user' | 'assistant'; text: string }[];
 }
 

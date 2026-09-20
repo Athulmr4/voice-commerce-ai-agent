@@ -10,9 +10,8 @@ import { renderTemplate, formatINR } from './localization/localization.js';
 import { recordTurn } from './speech/latencyStats.js';
 import { spokenProductSummary } from './speech/optimizer.js';
 import { logger } from './logger.js';
-import { getLLMProvider, isLLMConfigured } from './llm/index.js';
-import { KeywordProvider } from './llm/keywordExtractor.js';
-import type { LLMExtraction, SessionContext } from './llm/LLMProvider.js';
+import { getLLMProviders } from './llm/index.js';
+import type { LLMExtraction, LLMProvider, SessionContext } from './llm/LLMProvider.js';
 import { getSession, mergeEntities, pushTurn } from '../conversation.js';
 
 export interface MessageResult {
@@ -31,51 +30,79 @@ export async function processMessage(conversationId: string, text: string): Prom
     [randomUUID(), conversationId, 'user', text, new Date().toISOString()]);
   pushTurn(session, 'user', text);
 
-  const llm = getLLMProvider();
+  const chain = getLLMProviders();
+  let serving: LLMProvider | null = null;
   let extraction: LLMExtraction | null = null;
   let tool = 'searchProducts';
   let toolResult: unknown = null;
   let llmLatencyMs = 0;
   let toolLatencyMs = 0;
-  let llmUsed = llm.name;
 
-  // Path A — Gemini function-calling: model picks tool + args, registry executes.
-  // One LLM call per turn: intent/entities are derived from the tool decision,
-  // so no second extraction call is needed.
-  if (isLLMConfigured() && llm.decideTool) {
+  // Path A — function-calling: first cloud provider whose decideTool succeeds
+  // picks tool + args; the registry executes. Intent/entities derive from the
+  // decision, so this costs exactly one LLM call.
+  // Safety: placeOrder executes ONLY against a matching pending confirmation.
+  // A model that jumps straight to placeOrder is downgraded to staging.
+  for (const candidate of chain) {
+    if (!candidate.decideTool) continue;
     const t0 = Date.now();
     try {
-      const decision = await llm.decideTool(text, session);
+      const decision = await candidate.decideTool(text, session);
       llmLatencyMs = Date.now() - t0;
       const tTool = Date.now();
-      toolResult = await executeTool(decision.name, decision.args);
+      const emptyEntities = {
+        category: null, maxPrice: null, minPrice: null, color: null,
+        brand: null, size: null, productId: null, orderId: null, quantity: null,
+      };
+      if (decision.name === 'placeOrder' && !pendingMatches(session, decision.args)) {
+        const staged = await stagePendingOrder(decision.args, text, session, emptyEntities);
+        toolResult = staged.result;
+      } else {
+        toolResult = await executeTool(decision.name, decision.args);
+        // A buy request priced by the model still needs an explicit yes:
+        // stage the pending order so the reply asks for confirmation.
+        if (decision.name === 'calculatePrice' && isBuyRequest(text) && !session.pendingOrder) {
+          const staged = await stagePendingOrder(decision.args, text, session, emptyEntities);
+          if ((staged.result as { pending?: boolean })?.pending) {
+            toolResult = staged.result;
+            decision.name = 'placeOrder';
+          }
+        }
+      }
       toolLatencyMs = Date.now() - tTool;
       tool = decision.name;
+      serving = candidate;
       extraction = extractionFromDecision(decision.name, decision.args);
+      break;
     } catch (e) {
       llmLatencyMs = Date.now() - t0;
-      llmUsed = 'keyword-fallback (llm-error)';
-      logger.warn({ err: (e as Error).message?.slice(0, 200) }, 'llm decideTool failed, keyword fallback');
+      logger.warn({ provider: candidate.name, err: (e as Error).message?.slice(0, 200) }, 'llm decideTool failed, trying next');
     }
   }
 
-  // Path B — intent extraction + deterministic routing (offline default, or Gemini fallback).
+  // Path B — intent extraction + deterministic routing, first success wins.
+  // The trailing keyword provider never throws, so extraction is always set.
   if (!toolResult) {
-    const t0 = Date.now();
-    try {
-      extraction = await llm.extract(text, session);
-    } catch (e) {
-      extraction = await new KeywordProvider().extract(text, session);
-      llmUsed = 'keyword-fallback (llm-error)';
-      logger.warn({ err: (e as Error).message?.slice(0, 200) }, 'llm extract failed, keyword fallback');
+    for (const candidate of chain) {
+      const t0 = Date.now();
+      try {
+        extraction = await candidate.extract(text, session);
+        llmLatencyMs = Date.now() - t0;
+        if (candidate.name !== 'keyword-fallback') serving = candidate;
+        break;
+      } catch (e) {
+        llmLatencyMs = Date.now() - t0;
+        logger.warn({ provider: candidate.name, err: (e as Error).message?.slice(0, 200) }, 'llm extract failed, trying next');
+      }
     }
-    llmLatencyMs = Date.now() - t0;
+    if (!extraction) throw new Error('All LLM providers failed');
     const tTool = Date.now();
     const routed = await routeIntent(text, extraction, session);
     toolLatencyMs = Date.now() - tTool;
     tool = routed.tool;
     toolResult = routed.result;
   }
+  const llmUsed = serving ? serving.name : 'keyword-fallback';
 
   if (extraction) {
     Object.assign(session, mergeEntities(session, extraction.entities));
@@ -90,11 +117,10 @@ export async function processMessage(conversationId: string, text: string): Prom
 
   // Voice reply: LLM phrasing when a cloud provider served the turn,
   // deterministic English templates otherwise.
-  const cloudServed = llmUsed !== 'keyword-fallback' && !llmUsed.includes('llm-error');
   let reply: string;
-  if (cloudServed && extraction) {
+  if (serving && extraction) {
     try {
-      reply = await llm.reply({ text, extraction, context: session, toolSummary });
+      reply = await serving.reply({ text, extraction, context: session, toolSummary });
     } catch {
       reply = fallbackReply(tool, toolResult);
     }
@@ -124,7 +150,7 @@ export async function processMessage(conversationId: string, text: string): Prom
 }
 
 function toolToIntent(tool: string): string {
-  return { searchProducts: 'product_search', getProductDetails: 'product_details', checkInventory: 'inventory_check', calculatePrice: 'price_check', getOrderStatus: 'order_status' }[tool] ?? 'unclear';
+  return { searchProducts: 'product_search', getProductDetails: 'product_details', checkInventory: 'inventory_check', calculatePrice: 'price_check', getOrderStatus: 'order_status', placeOrder: 'place_order' }[tool] ?? 'unclear';
 }
 
 // Derive the session update from a function-calling decision so Path A costs
@@ -149,6 +175,56 @@ function extractionFromDecision(tool: string, args: Record<string, unknown>): LL
 }
 
 interface Routed { tool: string; args: Record<string, unknown>; result: unknown }
+
+// Explicit purchase wording (shared with the keyword extractor's intent rules).
+function isBuyRequest(text: string): boolean {
+  return /buy|place (the|my) order|order it|checkout|book it|confirm (the|my) order|proceed to (buy|pay)/i.test(text);
+}
+
+// True when the pending confirmation covers exactly what the model wants to order.
+function pendingMatches(session: SessionContext, args: Record<string, unknown>): boolean {
+  const p = session.pendingOrder;
+  if (!p) return false;
+  if (typeof args.productId === 'string' && args.productId !== p.productId) return false;
+  if (typeof args.quantity === 'number' && args.quantity !== p.quantity) return false;
+  if (typeof args.size === 'string' && (args.size !== p.size)) return false;
+  return true;
+}
+
+// Resolve a product, price it deterministically, and stage it as pendingOrder.
+// Shared by Path A (model jumped straight to placeOrder) and Path B (new request).
+async function stagePendingOrder(
+  hints: { productId?: string | null; size?: string; quantity?: number; discountCode?: string },
+  text: string,
+  s: SessionContext,
+  entities: LLMExtraction['entities'],
+): Promise<Routed> {
+  let productId = hints.productId ?? s.productId ?? s.lastProductIds?.[0];
+  if (!productId) {
+    const found = (await executeTool('searchProducts', {
+      category: entities.category ?? s.category, brand: entities.brand ?? s.brand, limit: 1,
+    })) as { id: string }[];
+    if (found.length === 0) return { tool: 'searchProducts', args: {}, result: [] };
+    productId = found[0].id;
+  }
+  const size = hints.size ?? s.size;
+  const qty = (typeof hints.quantity === 'number' && hints.quantity >= 1 && hints.quantity <= 99)
+    ? Math.floor(hints.quantity)
+    : (parseQuantity(text) || 1);
+  const discountCode = hints.discountCode ?? (await matchDiscountCode(text));
+  try {
+    const breakup = (await executeTool('calculatePrice', {
+      productId, quantity: qty, ...(discountCode ? { discountCode } : {}),
+    })) as { total: number };
+    const details = (await executeTool('getProductDetails', { productId }).catch(() => null)) as { name?: string } | null;
+    const productName = details?.name ?? productId;
+    s.pendingOrder = { productId, ...(size ? { size } : {}), quantity: qty, ...(discountCode ? { discountCode } : {}), total: breakup.total };
+    return { tool: 'placeOrder', args: { productId }, result: { pending: true, productId, productName, size, quantity: qty, discountCode, total: breakup.total } };
+  } catch (e) {
+    if (e instanceof PricingError) return { tool: 'placeOrder', args: { productId }, result: { error: e.code } };
+    throw e;
+  }
+}
 
 async function routeIntent(text: string, extraction: LLMExtraction, session: SessionContext): Promise<Routed> {
   const s = session;
@@ -188,6 +264,36 @@ async function routeIntent(text: string, extraction: LLMExtraction, session: Ses
   const categoryChanged = !!entities.category && entities.category !== s.category;
   const remembered = categoryChanged ? undefined : (s.productId ?? s.lastProductIds?.[0]);
 
+  if (extraction.intent === 'place_order') {
+    const t = text.toLowerCase();
+    // Cancel a pending order. Scoped to turns where one exists (see extractor).
+    if (/^(no|nope|cancel|don't|dont|stop)\b/.test(t) && s.pendingOrder) {
+      s.pendingOrder = undefined;
+      return { tool: 'placeOrder', args: {}, result: { cancelled: true } };
+    }
+    // Confirm a pending order: re-price fresh, then execute. Never trust a stale total.
+    if (/^(yes|yeah|yep|ok|sure|confirm|do it|place it|go ahead|buy|order)\b/.test(t) && s.pendingOrder) {
+      const p = s.pendingOrder;
+      s.pendingOrder = undefined;
+      try {
+        const result = await executeTool('placeOrder', {
+          productId: p.productId, ...(p.size ? { size: p.size } : {}),
+          quantity: p.quantity, ...(p.discountCode ? { discountCode: p.discountCode } : {}),
+        });
+        return { tool: 'placeOrder', args: { productId: p.productId }, result };
+      } catch (e) {
+        const code = (e as { code?: string })?.code ?? 'ORDER_FAILED';
+        return { tool: 'placeOrder', args: { productId: p.productId }, result: { error: code } };
+      }
+    }
+    // New order request: resolve product, price it, and stage for confirmation.
+    // Nothing is ordered here — execution requires a later explicit yes.
+    return stagePendingOrder(
+      { productId: entities.productId, size: entities.size ?? s.size },
+      text, s, entities,
+    );
+  }
+
   if (extraction.intent === 'price_check') {
     let productId = entities.productId ?? remembered;
     if (!productId) {
@@ -223,7 +329,9 @@ async function routeIntent(text: string, extraction: LLMExtraction, session: Ses
     return { tool: 'checkInventory', args: { productId, size }, result };
   }
 
-  // product_search / chitchat / unclear: search with merged context
+  // product_search / chitchat / unclear: search with merged context.
+  // A topic switch voids any unconfirmed order (prevents stale "yes" buys).
+  if (categoryChanged) s.pendingOrder = undefined;
   const args = {
     category: entities.category ?? s.category, maxPrice: entities.maxPrice ?? s.maxPrice,
     minPrice: entities.minPrice ?? s.minPrice, color: entities.color ?? s.color,
@@ -232,12 +340,14 @@ async function routeIntent(text: string, extraction: LLMExtraction, session: Ses
   return { tool: 'searchProducts', args, result: await executeTool('searchProducts', args) };
 }
 
-function parseQuantity(text: string): number {
+export function parseQuantity(text: string): number {
+  // A number after "size" is the SIZE, never the quantity. Same for order ids.
+  const cleaned = text.replace(/size\s?\d+/gi, ' ').replace(/\b[A-Z]{2}\d{4,}\b/g, ' ');
   const words: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5 };
-  const d = text.match(/(\d+)\s?(?:piece|pieces|pair|pairs|qty|quantity|nos)?/i);
+  const d = cleaned.match(/(\d+)\s?(?:piece|pieces|pair|pairs|qty|quantity|nos)?/i);
   if (d) return Math.min(Math.max(Number(d[1]), 1), 99);
   for (const [w, n] of Object.entries(words)) {
-    if (new RegExp(`\\b${w}\\b`, 'i').test(text)) return n;
+    if (new RegExp(`\\b${w}\\b`, 'i').test(cleaned)) return n;
   }
   return 1;
 }
@@ -268,6 +378,12 @@ function summarizeTool(tool: string, result: unknown): string {
   if (tool === 'getProductDetails') {
     const p = r as { name?: string; brand?: string; price?: number };
     return p.name ? `Product ${p.name} by ${p.brand}, price ${p.price}.` : 'Product details lookup returned nothing.';
+  }
+  if (tool === 'placeOrder') {
+    if (r.cancelled) return 'Order cancelled.';
+    if (r.pending) return `Order pending confirmation: ${r.quantity}x ${r.productName ?? r.productId} total ${r.total}.`;
+    if (r.error) return `placeOrder failed: ${r.error}.`;
+    return `Order ${r.orderId} placed: ${r.quantity}x ${r.productName ?? r.productId}, total ${r.total}.`;
   }
   const list = (result as { name: string; price: number }[]).map(p => `${p.name} at ${p.price}`).join('; ') || 'none';
   return `searchProducts returned ${(result as unknown[]).length} items: ${list}.`;
@@ -305,6 +421,20 @@ function fallbackReply(tool: string, result: unknown): string {
     return spokenProductSummary({
       name: String(r.name), price: Number(r.price), brand: String(r.brand ?? ''),
       color: (r.color as string | null) ?? null, description: String(r.description ?? ''),
+    });
+  }
+
+  if (tool === 'placeOrder') {
+    if (r.cancelled) return 'No problem, I cancelled that order. Anything else?';
+    if (r.pending) {
+      return t('I can place the order for {{quantity}} x {{product}} totalling {{total}}. Say yes to confirm, or no to cancel.', {
+        quantity: Number(r.quantity), product: String(r.productName ?? r.productId), total: formatINR(Number(r.total)),
+      });
+    }
+    if (r.error === 'OUT_OF_STOCK') return "Sorry, it just went out of stock. Want me to find an alternative?";
+    if (r.error) return "Sorry, I couldn't place that order. Want to try again?";
+    return t('Done! Your order {{order_id}} is confirmed, worth {{total}}. Expected in 3 days.', {
+      order_id: String(r.orderId), total: formatINR(Number(r.total)),
     });
   }
 

@@ -3,6 +3,9 @@ import { ShopifyProvider } from '../src/services/commerce/ShopifyProvider.js';
 import { getCommerceProvider } from '../src/services/commerce/index.js';
 import { CommerceError } from '../src/services/commerce/CommerceProvider.js';
 
+// Isolated DB: each test file seeds a fresh in-memory database.
+process.env.SQLITE_PATH = ':memory:';
+
 const PRODUCT = {
   id: 101,
   title: 'Nike Revolution 7',

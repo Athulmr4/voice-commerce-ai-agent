@@ -1,7 +1,9 @@
-import { queryAll } from '../../db/database.js';
+import { randomUUID } from 'node:crypto';
+import { queryAll, runStmtAsync } from '../../db/database.js';
 import type { Product, ProductFilters } from '../../types/commerce.js';
-import type { CommerceCustomer, CommerceDiscount, CommerceOrder, CommerceProvider } from './CommerceProvider.js';
+import type { CommerceCustomer, CommerceDiscount, CommerceOrder, CommerceProvider, CreateOrderInput, OrderConfirmation } from './CommerceProvider.js';
 import { CommerceError } from './CommerceProvider.js';
+import { priceBreakup } from '../pricing/calc.js';
 
 function toProduct(r: Record<string, unknown>): Product {
   return {
@@ -59,5 +61,47 @@ export class MockCommerceProvider implements CommerceProvider {
     if (rows.length === 0) return null;
     const d = rows[0] as Record<string, unknown>;
     return { code: String(d.code), percent: Number(d.percent) };
+  }
+  async createOrder(input: CreateOrderInput): Promise<OrderConfirmation> {
+    const { productId, size, quantity } = input;
+    const discountCode = input.discountCode?.toUpperCase();
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+      throw new CommerceError('INVALID_QUANTITY', 'Quantity must be an integer between 1 and 99', 400);
+    }
+    const product = await this.getProduct(productId);
+    if (!product) throw new CommerceError('INVALID_PRODUCT', `Unknown product ${productId}`, 404);
+    let discountPercent = 0;
+    if (discountCode) {
+      const deal = await this.getDiscount(discountCode);
+      if (!deal) throw new CommerceError('INVALID_DISCOUNT', `Unknown discount code ${discountCode}`, 400);
+      discountPercent = deal.percent;
+    }
+    // Reserve stock first: sized row, else drain rows with stock in size order.
+    const rows = (await queryAll(
+      'SELECT id, size, quantity FROM inventory WHERE product_id = ? ORDER BY size', [productId],
+    )) as { id: string; size: string; quantity: number }[];
+    const relevant = size ? rows.filter(r => r.size === size) : rows.filter(r => r.quantity > 0);
+    const available = relevant.reduce((sum, r) => sum + r.quantity, 0);
+    if (relevant.length === 0 || available < quantity) {
+      throw new CommerceError('OUT_OF_STOCK', `Only ${available} left in stock`, 409);
+    }
+    let left = quantity;
+    for (const r of relevant) {
+      if (left <= 0) break;
+      const take = Math.min(r.quantity, left);
+      await runStmtAsync('UPDATE inventory SET quantity = quantity - ? WHERE id = ?', [take, r.id]);
+      left -= take;
+    }
+    const { subtotal, discount, shipping, total } = priceBreakup(product.price, quantity, discountPercent);
+    const orderId = `KW${Date.now().toString(36).toUpperCase()}${Math.floor(Math.random() * 1296).toString(36).toUpperCase().padStart(2, '0')}`;
+    await runStmtAsync(
+      'INSERT INTO orders (id,user_id,status,subtotal,discount,shipping,total,estimated_delivery) VALUES (?,?,?,?,?,?,?,?)',
+      [orderId, input.customerId ?? 'U1', 'CONFIRMED', subtotal, discount, shipping, total, 'In 3 days'],
+    );
+    await runStmtAsync(
+      'INSERT INTO order_items (id,order_id,product_id,size,quantity,unit_price) VALUES (?,?,?,?,?,?)',
+      [randomUUID(), orderId, productId, size ?? null, quantity, product.price],
+    );
+    return { orderId, status: 'CONFIRMED', productId, productName: product.name, size, quantity, subtotal, discount, shipping, total };
   }
 }

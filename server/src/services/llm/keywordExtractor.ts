@@ -34,9 +34,11 @@ export class KeywordProvider implements LLMProvider {
     const t = text.toLowerCase();
     const order = text.match(/\b([A-Z]{2}\d{4,})\b/);
     const merged = extractFilters(text, context);
-    let intent: LLMExtraction['intent'] = 'product_search';
-    if (order || /order|status|where.*(order|package)|deliver/.test(t)) intent = 'order_status';
-    else if (/detail|specification|about (this|that|it)|tell me more/.test(t)) intent = 'product_details';
+        let intent: LLMExtraction['intent'] = 'product_search';
+    if (order || /order status|order-status|where.*(order|package)|deliver|track.*order/.test(t)) intent = 'order_status';
+    else if (context.pendingOrder && /^(no|nope|cancel|don't|dont|stop)\b/.test(t)) intent = 'place_order';
+    else if (/buy|place (the|my) order|order it|checkout|book it|confirm (the|my) order|proceed to (buy|pay)/.test(t)) intent = 'place_order';
+    else if (context.pendingOrder && /^(yes|yeah|yep|ok|sure|confirm|do it|place it|go ahead)\b/.test(t)) intent = 'place_order';    else if (/detail|specification|about (this|that|it)|tell me more/.test(t)) intent = 'product_details';
     else if (/^(yes|yeah|yep|ok|sure)\b/.test(t) && context.lastProductIds?.length) intent = 'product_details';
     // "cheapest" is a comparison question about known results, not a price calculation.
     // (Must precede price_check: "cheapest" contains "cheap".)

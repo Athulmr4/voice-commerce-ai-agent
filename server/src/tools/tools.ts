@@ -32,6 +32,13 @@ const pricingSchema = z.object({
 
 const orderStatusSchema = z.object({ orderId: z.string().min(1) });
 
+const placeOrderSchema = z.object({
+  productId: z.string().min(1),
+  size: z.string().optional(),
+  quantity: z.number().int().min(1).max(99).default(1),
+  discountCode: z.string().optional(),
+});
+
 export const toolDefinitions: ToolDefinition[] = [
   {
     name: 'searchProducts',
@@ -70,6 +77,15 @@ export const toolDefinitions: ToolDefinition[] = [
     description: 'Look up an order by id. Returns status, estimated delivery, and total.',
     schema: orderStatusSchema,
     execute: async (args: unknown) => getOrderStatus(orderStatusSchema.parse(args).orderId),
+  },
+  {
+    name: 'placeOrder',
+    description: 'Place an order for a product and quantity. Only call after the customer confirmed; prices and stock are checked deterministically.',
+    schema: placeOrderSchema,
+    execute: async (args: unknown) => {
+      const parsed = placeOrderSchema.parse(args) as { productId: string; size?: string; quantity: number; discountCode?: string };
+      return getCommerceProvider().createOrder(parsed);
+    },
   },
 ];
 

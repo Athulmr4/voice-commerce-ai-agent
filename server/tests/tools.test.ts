@@ -8,6 +8,8 @@ import { executeTool, toolDefinitions } from '../src/tools/tools.js';
 import { GEMINI_TOOL_DECLARATIONS } from '../src/tools/geminiDeclarations.js';
 
 process.env.NODE_ENV = 'test';
+// Isolated DB: each test file seeds a fresh in-memory database.
+process.env.SQLITE_PATH = ':memory:';
 // Hermetic: conversation tests use the deterministic keyword path, never a live LLM.
 delete process.env.GOOGLE_API_KEY;
 delete process.env.GROQ_API_KEY;
