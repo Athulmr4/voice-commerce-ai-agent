@@ -3,6 +3,9 @@ import request from 'supertest';
 import { app } from '../src/app.js';
 
 process.env.NODE_ENV = 'test';
+// Hermetic: conversation tests use the deterministic keyword path, never live Gemini.
+delete process.env.GOOGLE_API_KEY;
+
 
 describe('Phase 1 API', () => {
   it('health ok', async () => {

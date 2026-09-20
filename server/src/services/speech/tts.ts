@@ -27,7 +27,12 @@ export class ElevenLabsTTSProvider implements TTSProvider {
       headers: { 'xi-api-key': this.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: voiceText, model_id: 'eleven_multilingual_v2' }),
     });
-    if (!res.ok) throw new SpeechError('TTS_UPSTREAM', `ElevenLabs error ${res.status}`, 502);
+    if (!res.ok) {
+      // Surface the provider's reason (e.g. free-plan voice restriction) without leaking the key.
+      const detail = await res.json().catch(() => null) as { detail?: { message?: string } } | null;
+      const reason = detail?.detail?.message ?? `ElevenLabs error ${res.status}`;
+      throw new SpeechError('TTS_UPSTREAM', reason, 502);
+    }
     const buf = Buffer.from(await res.arrayBuffer());
     return { voiceText, audioBase64: buf.toString('base64'), contentType: 'audio/mpeg' };
   }

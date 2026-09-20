@@ -43,7 +43,7 @@ export class GeminiProvider implements LLMProvider {
   readonly name = 'gemini';
   private model: string;
   private apiKey: string;
-  constructor(apiKey = process.env.GOOGLE_API_KEY ?? '', model = process.env.GEMINI_MODEL ?? 'gemini-1.5-flash') {
+  constructor(apiKey = process.env.GOOGLE_API_KEY ?? '', model = process.env.GEMINI_MODEL ?? 'gemini-3.6-flash') {
     this.apiKey = apiKey;
     this.model = model;
   }

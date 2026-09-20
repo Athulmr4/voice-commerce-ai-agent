@@ -6,6 +6,8 @@ import { getSTTProvider } from '../src/services/speech/stt.js';
 import { getTTSProvider } from '../src/services/speech/tts.js';
 
 process.env.NODE_ENV = 'test';
+// Hermetic: conversation tests use the deterministic keyword path, never live Gemini.
+delete process.env.GOOGLE_API_KEY;
 
 describe('Phase 4 voice', () => {
   it('optimizer speaks currency, strips markup, caps length', () => {
@@ -24,14 +26,29 @@ describe('Phase 4 voice', () => {
     expect(optimizeForSpeech(words).split(' ').length).toBeLessThanOrEqual(60);
   });
   it('default providers are browser-first without keys', () => {
-    expect(getSTTProvider().name).toBe('unavailable');
-    expect(getTTSProvider().name).toBe('browser');
+    // Hermetic: ignore any real keys in server/.env for this assertion.
+    const saved = { STT_PROVIDER: process.env.STT_PROVIDER, TTS_PROVIDER: process.env.TTS_PROVIDER };
+    delete process.env.STT_PROVIDER;
+    delete process.env.TTS_PROVIDER;
+    try {
+      expect(getSTTProvider().name).toBe('unavailable');
+      expect(getTTSProvider().name).toBe('browser');
+    } finally {
+      if (saved.STT_PROVIDER !== undefined) process.env.STT_PROVIDER = saved.STT_PROVIDER;
+      if (saved.TTS_PROVIDER !== undefined) process.env.TTS_PROVIDER = saved.TTS_PROVIDER;
+    }
   });
   it('transcribe answers 501 with browser fallback when unconfigured', async () => {
-    const r = await request(app).post('/api/voice/transcribe').send({ audioBase64: 'AAAA', mimeType: 'audio/webm' });
-    expect(r.status).toBe(501);
-    expect(r.body.fallback).toBe('browser-stt');
-    expect((await request(app).post('/api/voice/transcribe').send({})).status).toBe(400);
+    const saved = process.env.STT_PROVIDER;
+    delete process.env.STT_PROVIDER;
+    try {
+      const r = await request(app).post('/api/voice/transcribe').send({ audioBase64: 'AAAA', mimeType: 'audio/webm' });
+      expect(r.status).toBe(501);
+      expect(r.body.fallback).toBe('browser-stt');
+      expect((await request(app).post('/api/voice/transcribe').send({})).status).toBe(400);
+    } finally {
+      if (saved !== undefined) process.env.STT_PROVIDER = saved;
+    }
   });
   it('respond runs full pipeline with latency breakdown', async () => {
     const r = await request(app).post('/api/voice/respond').send({ text: 'Show me running shoes under 3000', sttLatencyMs: 420 });

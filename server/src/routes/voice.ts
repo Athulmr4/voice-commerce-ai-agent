@@ -6,10 +6,10 @@ import { runStmt } from '../db/database.js';
 import { createSession } from '../conversation.js';
 import { processMessage } from '../services/conversationService.js';
 import { getSTTProvider } from '../services/speech/stt.js';
-import { getTTSProvider } from '../services/speech/tts.js';
+import { BrowserTTSProvider, getTTSProvider } from '../services/speech/tts.js';
 import { getLatencyStats } from '../services/speech/latencyStats.js';
 import { SpeechError } from '../services/speech/providers.js';
-import { logVoiceTurn } from '../services/logger.js';
+import { logVoiceTurn, logger } from '../services/logger.js';
 import { requireApiKey } from '../middleware/requireApiKey.js';
 
 export const voiceRouter = Router();
@@ -67,7 +67,18 @@ voiceRouter.post('/respond', async (req, res, next) => {
     const result = await processMessage(cid, text);
 
     const tTts = Date.now();
-    const synth = await getTTSProvider().synthesize({ text: result.reply, voice });
+    // Cloud TTS failure must never kill the turn: fall back to browser TTS
+    // (client speaks voiceText via speechSynthesis) and say so in the response.
+    let synth;
+    let ttsFallback = false;
+    try {
+      synth = await getTTSProvider().synthesize({ text: result.reply, voice });
+    } catch (e) {
+      if (!(e instanceof SpeechError)) throw e;
+      logger.warn({ code: e.code, detail: e.message }, 'cloud tts failed, browser fallback');
+      synth = await new BrowserTTSProvider().synthesize({ text: result.reply });
+      ttsFallback = true;
+    }
     const ttsLatencyMs = Date.now() - tTts;
     const totalMs = Date.now() - t0;
 
@@ -85,6 +96,7 @@ voiceRouter.post('/respond', async (req, res, next) => {
       voiceText: synth.voiceText,
       audioBase64: synth.audioBase64,
       contentType: synth.contentType,
+      ttsFallback,
       products: result.products,
       filters: result.filters,
       intent: result.intent,
