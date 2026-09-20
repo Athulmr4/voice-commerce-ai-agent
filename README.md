@@ -12,7 +12,7 @@ Customers prefer speaking over typing filters. LLM must understand intent but ne
 - [x] Product search API (category, price, color, brand, text)
 - [x] Product details + inventory endpoints
 - [x] Conversations with session context across turns (merged entities + last-10-turn history)
-- [x] LLM integration: `LLMProvider` seam — `GeminiProvider` (`gemini-3.6-flash`, JSON-mode intent extraction + voice replies) when `GOOGLE_API_KEY` is set, deterministic `KeywordProvider` fallback otherwise/offline
+- [x] LLM integration: `LLMProvider` seam — `GroqProvider` (`llama-3.3-70b-versatile`, OpenAI-compatible JSON mode + function calling) when `GROQ_API_KEY` is set, `GeminiProvider` (`gemini-3.6-flash`) when `GOOGLE_API_KEY` is set, deterministic `KeywordProvider` fallback otherwise/offline. Selection: explicit `LLM_PROVIDER` (groq|gemini) wins, else Groq → Gemini → keyword. Each turn costs one LLM call (tool decision doubles as intent extraction).
 - [x] Modular prompts: `prompts/system.prompt.ts` (identity + never-invent/never-calculate rules) + `prompts/voice.prompt.ts` (short, 1 question, English-only, TTS-optimized) + `EXTRACTION_PROMPT`
 - [x] Full tool-calling: `tools/tools.ts` registry (`searchProducts`, `getProductDetails`, `checkInventory`, `calculatePrice`, `getOrderStatus`), all Zod-validated; Gemini picks tool+args via `decideTool()` + `GEMINI_TOOL_DECLARATIONS` (parity test prevents drift), registry executes
 - [x] Deterministic pricing service: subtotal/discount/shipping/total, `SUMMER10` = 10%, flat ₹100 shipping (free over ₹20,000); spec example verified: 5998 − 599.8 + 100 = 5498.2. LLM never computes prices.
@@ -97,7 +97,7 @@ Helmet headers, CORS allowlist (`CORS_ORIGIN`), global rate limit (120 req/min) 
 Every voice turn returns `latency: {sttMs, llmMs, toolMs, ttsMs, totalMs}` (browser-measured STT + server timings), rendered per assistant message. `GET /api/voice/stats` aggregates server-side stages (avg/p50/p95, by-tool counts, errors) over a 500-turn rolling window. Example offline turn: stt ~400ms (mic listen), llm ~0ms (keyword), tool ~2ms (sqlite), tts ~0ms (text optimize), total ~50ms + network. SQLite `busy_timeout=5000` guards concurrent turns. PII-free `voice_turn` logs carry the same fields for external aggregation.
 
 ## 17. Environment Variables
-See `.env.example`. Local demo needs only `PORT`, `CORS_ORIGIN`, `DB_PROVIDER`, `SQLITE_PATH`. Optional upgrades: `GOOGLE_API_KEY` (Gemini), `STT_PROVIDER` + `DEEPGRAM_API_KEY`/`OPENAI_API_KEY`, `TTS_PROVIDER=elevenlabs` + keys, `SHOPIFY_*` (real store), `API_KEY` (protects `/api/voice/stats`), `MYSQL_*` with `DB_PROVIDER=mysql`.
+See `.env.example`. Local demo needs only `PORT`, `CORS_ORIGIN`, `DB_PROVIDER`, `SQLITE_PATH`. Optional upgrades: `GROQ_API_KEY` (Groq LLM, preferred for low-latency voice) or `GOOGLE_API_KEY` (Gemini), `STT_PROVIDER` + `DEEPGRAM_API_KEY`/`OPENAI_API_KEY`, `TTS_PROVIDER=elevenlabs` + keys, `SHOPIFY_*` (real store), `API_KEY` (protects `/api/voice/stats`), `MYSQL_*` with `DB_PROVIDER=mysql`.
 
 ## 18. Local Setup
 ```bash
@@ -124,4 +124,4 @@ Phase 4: cloud STT/TTS. Phase 5: TTS optimizer + latency dashboard. Phase 6: rea
 `3000 ke andar` → context merged (category kept) → same 3 options under ₹3,000
 `Is it available in size 9?` → checkInventory → *"Yes, it's available — 8 in stock…"*
 `Where is my order KW12345?` → getOrderStatus → *"Your order has been shipped…"*
-Set `GOOGLE_API_KEY` (+ optional `GEMINI_MODEL`) to route extraction + reply phrasing through Gemini; backend data stays authoritative either way.
+Set `GROQ_API_KEY` (+ optional `GROQ_MODEL`, `LLM_PROVIDER`) or `GOOGLE_API_KEY` (+ optional `GEMINI_MODEL`) to route extraction + reply phrasing through a cloud LLM; backend data stays authoritative either way.

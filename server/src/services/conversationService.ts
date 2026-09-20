@@ -88,9 +88,11 @@ export async function processMessage(conversationId: string, text: string): Prom
   }
   const toolSummary = summarizeTool(tool, toolResult);
 
-  // Voice reply: LLM phrasing when available, deterministic English templates otherwise.
+  // Voice reply: LLM phrasing when a cloud provider served the turn,
+  // deterministic English templates otherwise.
+  const cloudServed = llmUsed !== 'keyword-fallback' && !llmUsed.includes('llm-error');
   let reply: string;
-  if (llmUsed === 'gemini' && extraction) {
+  if (cloudServed && extraction) {
     try {
       reply = await llm.reply({ text, extraction, context: session, toolSummary });
     } catch {
