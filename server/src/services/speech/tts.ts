@@ -1,4 +1,4 @@
-import type { SpokenLanguage, Synthesis, SynthesizeInput, TTSProvider } from './providers.js';
+import type { Synthesis, SynthesizeInput, TTSProvider } from './providers.js';
 import { SpeechError } from './providers.js';
 import { optimizeForSpeech } from './optimizer.js';
 
@@ -7,7 +7,7 @@ import { optimizeForSpeech } from './optimizer.js';
 export class BrowserTTSProvider implements TTSProvider {
   readonly name = 'browser';
   async synthesize(input: SynthesizeInput): Promise<Synthesis> {
-    return { voiceText: optimizeForSpeech(input.text, input.language) };
+    return { voiceText: optimizeForSpeech(input.text) };
   }
 }
 
@@ -21,7 +21,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
   ) {}
   async synthesize(input: SynthesizeInput): Promise<Synthesis> {
     if (!this.apiKey) throw new SpeechError('TTS_NOT_CONFIGURED', 'Missing ELEVENLABS_API_KEY', 501);
-    const voiceText = optimizeForSpeech(input.text, input.language);
+    const voiceText = optimizeForSpeech(input.text);
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${input.voice ?? this.voiceId}`, {
       method: 'POST',
       headers: { 'xi-api-key': this.apiKey, 'Content-Type': 'application/json' },
@@ -38,5 +38,3 @@ export function getTTSProvider(): TTSProvider {
   if (which === 'elevenlabs') return new ElevenLabsTTSProvider();
   return new BrowserTTSProvider();
 }
-
-export type { SpokenLanguage };

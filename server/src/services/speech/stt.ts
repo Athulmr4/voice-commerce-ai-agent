@@ -32,12 +32,7 @@ export class DeepgramSTTProvider implements STTProvider {
     const alt = data.results?.channels?.[0]?.alternatives?.[0];
     const text = alt?.transcript?.trim() ?? '';
     if (!text) throw new SpeechError('STT_EMPTY', 'No speech recognized', 502);
-    const langs = alt?.languages ?? [];
-    return {
-      text,
-      language: langs.some(l => l.startsWith('hi')) || /[\u0900-\u097F]/.test(text) ? 'hinglish' : 'english',
-      confidence: alt?.confidence,
-    };
+    return { text, confidence: alt?.confidence };
   }
 }
 
@@ -61,7 +56,7 @@ export class WhisperSTTProvider implements STTProvider {
     const data = (await res.json()) as { text?: string };
     const text = data.text?.trim() ?? '';
     if (!text) throw new SpeechError('STT_EMPTY', 'No speech recognized', 502);
-    return { text, language: /[\u0900-\u097F]/.test(text) ? 'hinglish' : 'english' };
+    return { text };
   }
 }
 

@@ -10,7 +10,7 @@ import { renderTemplate, formatINR } from './localization/localization.js';
 import { recordTurn } from './speech/latencyStats.js';
 import { spokenProductSummary } from './speech/optimizer.js';
 import { getLLMProvider, isLLMConfigured } from './llm/index.js';
-import { KeywordProvider, detectHinglish } from './llm/keywordExtractor.js';
+import { KeywordProvider } from './llm/keywordExtractor.js';
 import type { LLMExtraction, SessionContext } from './llm/LLMProvider.js';
 import { getSession, mergeEntities, pushTurn } from '../conversation.js';
 
@@ -75,25 +75,24 @@ export async function processMessage(conversationId: string, text: string): Prom
   if (extraction) {
     Object.assign(session, mergeEntities(session, extraction.entities));
   }
-  // Remember top results so follow-ups ("haan batao", "size 9?") resolve without repeats.
+  // Remember top results so follow-ups ("tell me more", "size 9?") resolve without repeats.
   if (tool === 'searchProducts' && Array.isArray(toolResult) && toolResult.length > 0) {
     session.lastProductIds = (toolResult as { id: string }[]).slice(0, 3).map(p => p.id);
   } else if (tool === 'getProductDetails' && (toolResult as { id?: string })?.id) {
     session.lastProductIds = [(toolResult as { id: string }).id];
   }
-  const hinglish = extraction?.language === 'hinglish' || detectHinglish(text);
   const toolSummary = summarizeTool(tool, toolResult);
 
-  // Voice reply: LLM phrasing when available, localized deterministic templates otherwise.
+  // Voice reply: LLM phrasing when available, deterministic English templates otherwise.
   let reply: string;
   if (llmUsed === 'gemini' && extraction) {
     try {
       reply = await llm.reply({ text, extraction, context: session, toolSummary });
     } catch {
-      reply = fallbackReply(tool, toolResult, hinglish, text);
+      reply = fallbackReply(tool, toolResult);
     }
   } else {
-    reply = fallbackReply(tool, toolResult, hinglish, text);
+    reply = fallbackReply(tool, toolResult);
   }
 
   runStmt('INSERT INTO conversation_messages (id,conversation_id,role,text,created_at) VALUES (?,?,?,?,?)',
@@ -113,7 +112,7 @@ export async function processMessage(conversationId: string, text: string): Prom
       color: session.color, brand: session.brand, size: session.size, productId: session.productId,
     },
     intent,
-    meta: { tool, toolLatencyMs, llmLatencyMs, llm: llmUsed, language: hinglish ? 'hinglish' : 'english', success },
+    meta: { tool, toolLatencyMs, llmLatencyMs, llm: llmUsed, language: 'english', success },
   };
 }
 
@@ -246,67 +245,45 @@ function summarizeTool(tool: string, result: unknown): string {
   return `searchProducts returned ${(result as unknown[]).length} items: ${list}.`;
 }
 
-function fallbackReply(tool: string, result: unknown, hinglish: boolean, text: string): string {
+function fallbackReply(tool: string, result: unknown): string {
   const r = (result ?? {}) as Record<string, unknown>;
   const t = (template: string, vars: Record<string, string | number>): string =>
     renderTemplate(template, vars).text;
 
   if (tool === 'getOrderStatus') {
-    if (r.error) return hinglish
-      ? 'Sorry, is order id ka koi order nahi mila. Id check karke dobara batayein?'
-      : "Sorry, I couldn't find that order. Could you check the id?";
-    return hinglish
-      ? t('Aapka order {{order_id}} {{order_status}} hai, {{order_total}} ka. {{estimated_delivery}} tak pahunchna chahiye.', {
-        order_id: String(r.orderId), order_status: String(r.status).toLowerCase(),
-        order_total: formatINR(Number(r.total)), estimated_delivery: 'Kal',
-      })
-      : t('Your order {{order_id}} is {{order_status}}, worth {{order_total}}. Expected {{estimated_delivery}}.', {
-        order_id: String(r.orderId), order_status: String(r.status).toLowerCase(),
-        order_total: formatINR(Number(r.total)), estimated_delivery: String(r.estimatedDelivery).toLowerCase(),
-      });
+    if (r.error) return "Sorry, I couldn't find that order. Could you check the id?";
+    return t('Your order {{order_id}} is {{order_status}}, worth {{order_total}}. Expected {{estimated_delivery}}.', {
+      order_id: String(r.orderId), order_status: String(r.status).toLowerCase(),
+      order_total: formatINR(Number(r.total)), estimated_delivery: String(r.estimatedDelivery).toLowerCase(),
+    });
   }
 
   if (tool === 'checkInventory') {
-    if (r.available) return hinglish
-      ? t('Haan, available hai — {{quantity}} piece stock mein hain. Order karna chahenge?', { quantity: Number(r.quantity) })
-      : t("Yes, it's available — {{quantity}} in stock. Want to order?", { quantity: Number(r.quantity) });
-    return hinglish ? 'Sorry, ye size abhi out of stock hai. Koi aur size dekhun?' : 'Sorry, that size is currently out of stock. Want to try another size?';
+    if (r.available) return t("Yes, it's available — {{quantity}} in stock. Want to order?", { quantity: Number(r.quantity) });
+    return 'Sorry, that size is currently out of stock. Want to try another size?';
   }
 
   if (tool === 'calculatePrice') {
-    if (r.error === 'INVALID_DISCOUNT') return hinglish
-      ? 'Sorry, ye discount code valid nahi hai. Bina discount ke total bataun?'
-      : 'Sorry, that discount code is not valid. Want the total without it?';
-    if (r.error) return hinglish ? 'Sorry, price calculate nahi ho paya. Product confirm karein?' : "Sorry, I couldn't calculate the price. Which product did you mean?";
-    return hinglish
-      ? t('Total {{total}} hoga — {{quantity}} piece, discount {{discount}}, delivery {{shipping}}. Order karun?', {
-        total: formatINR(Number(r.total)), quantity: Number(r.quantity),
-        discount: formatINR(Number(r.discount)), shipping: formatINR(Number(r.shipping)),
-      })
-      : t('Your total is {{total}} — {{quantity}} items, discount {{discount}}, shipping {{shipping}}. Shall I place the order?', {
-        total: formatINR(Number(r.total)), quantity: Number(r.quantity),
-        discount: formatINR(Number(r.discount)), shipping: formatINR(Number(r.shipping)),
-      });
+    if (r.error === 'INVALID_DISCOUNT') return 'Sorry, that discount code is not valid. Want the total without it?';
+    if (r.error) return "Sorry, I couldn't calculate the price. Which product did you mean?";
+    return t('Your total is {{total}} — {{quantity}} items, discount {{discount}}, shipping {{shipping}}. Shall I place the order?', {
+      total: formatINR(Number(r.total)), quantity: Number(r.quantity),
+      discount: formatINR(Number(r.discount)), shipping: formatINR(Number(r.shipping)),
+    });
   }
 
   if (tool === 'getProductDetails') {
-    if (!r.name) return hinglish ? 'Sorry, us product ki details nahi mil payi.' : "Sorry, I couldn't pull up those details.";
-    return spokenProductSummary(
-      {
-        name: String(r.name), price: Number(r.price), brand: String(r.brand ?? ''),
-        color: (r.color as string | null) ?? null, description: String(r.description ?? ''),
-      },
-      hinglish ? 'hinglish' : 'english',
-    );
+    if (!r.name) return "Sorry, I couldn't pull up those details.";
+    return spokenProductSummary({
+      name: String(r.name), price: Number(r.price), brand: String(r.brand ?? ''),
+      color: (r.color as string | null) ?? null, description: String(r.description ?? ''),
+    });
   }
 
   const list = (result ?? []) as { price: number }[];
   if (list.length === 0) {
-    return detectHinglish(text) || hinglish
-      ? 'Namaste! Main aapka shopping assistant hoon. Aap kya dhoondh rahe hain?'
-      : "Hi! I'm your shopping assistant. What are you looking for today?";
+    return "Hi! I'm your shopping assistant. What are you looking for today?";
   }
   const cheapest = list[0]?.price ?? null;
-  if (hinglish) return `Haan, ${list.length} option${list.length > 1 ? 's' : ''} mile hain. Sabse affordable ${cheapest != null ? formatINR(cheapest) : ''} ka hai. Kya main uske details bataun?`;
   return `I found ${list.length} option${list.length > 1 ? 's' : ''}. Cheapest is ${cheapest != null ? formatINR(cheapest) : 'unavailable'}. Want details?`;
 }

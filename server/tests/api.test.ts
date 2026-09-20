@@ -37,7 +37,7 @@ describe('Phase 1 API', () => {
   it('conversation handles inventory intent with context', async () => {
     const c = await request(app).post('/api/conversations');
     const id = c.body.conversationId;
-    await request(app).post(`/api/conversations/${id}/messages`).send({ text: 'Mujhe running shoes chahiye' });
+    await request(app).post(`/api/conversations/${id}/messages`).send({ text: 'I need running shoes' });
     const r = await request(app).post(`/api/conversations/${id}/messages`).send({ text: 'Is it available in size 9?' });
     expect(r.status).toBe(200);
     expect(r.body.intent).toBe('inventory_check');
@@ -55,8 +55,8 @@ describe('Phase 1 API', () => {
     const c = await request(app).post('/api/conversations');
     const id = c.body.conversationId;
     expect(id).toBeTruthy();
-    await request(app).post(`/api/conversations/${id}/messages`).send({ text: 'Mujhe running shoes chahiye' });
-    const r2 = await request(app).post(`/api/conversations/${id}/messages`).send({ text: '3000 ke andar, black ones' });
+    await request(app).post(`/api/conversations/${id}/messages`).send({ text: 'I need running shoes' });
+    const r2 = await request(app).post(`/api/conversations/${id}/messages`).send({ text: 'Under 3000, black ones' });
     expect(r2.status).toBe(200);
     expect(r2.body.filters.category).toBe('running shoes');
     expect(r2.body.filters.maxPrice).toBe(3000);

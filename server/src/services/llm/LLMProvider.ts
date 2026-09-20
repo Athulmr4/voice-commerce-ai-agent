@@ -1,5 +1,4 @@
 export type Intent = 'product_search' | 'product_details' | 'inventory_check' | 'price_check' | 'order_status' | 'chitchat' | 'unclear';
-export type Language = 'hinglish' | 'english';
 
 export interface SessionContext {
   category?: string;
@@ -9,7 +8,7 @@ export interface SessionContext {
   brand?: string;
   size?: string;
   productId?: string;
-  /** Top product ids from the last successful search/details call. Enables "haan batao" follow-ups. */
+  /** Top product ids from the last successful search/details call. Enables "tell me more" follow-ups. */
   lastProductIds?: string[];
   history?: { role: 'user' | 'assistant'; text: string }[];
 }
@@ -27,7 +26,6 @@ export interface LLMExtraction {
     orderId?: string | null;
     quantity?: number | null;
   };
-  language: Language;
 }
 
 export interface LLMProvider {

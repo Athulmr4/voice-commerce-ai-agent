@@ -33,7 +33,6 @@ function safeParse(json: string): LLMExtraction | null {
         orderId: (o.orderId as string) ?? null,
         quantity: typeof o.quantity === 'number' ? o.quantity : null,
       },
-      language: o.language === 'hinglish' ? 'hinglish' : 'english',
     };
   } catch {
     return null;
@@ -69,8 +68,7 @@ export class GeminiProvider implements LLMProvider {
 
   async reply(args: { text: string; extraction: LLMExtraction; context: SessionContext; toolSummary: string }): Promise<string> {
     const textModel = new GoogleGenerativeAI(this.apiKey).getGenerativeModel({ model: this.model });
-    const lang = args.extraction.language === 'hinglish' ? 'Respond naturally in Hinglish.' : 'Respond in English.';
-    const prompt = `${VOICE_PROMPT}\n\n${lang}\nCustomer said: "${args.text}"\nBackend result (authoritative, describe only this): ${args.toolSummary}\nReply in 1-3 short spoken sentences with at most one question.`;
+    const prompt = `${VOICE_PROMPT}\n\nRespond in English.\nCustomer said: "${args.text}"\nBackend result (authoritative, describe only this): ${args.toolSummary}\nReply in 1-3 short spoken sentences with at most one question.`;
     const res = await withTimeout(textModel.generateContent(prompt));
     return res.response.text().trim().slice(0, 500);
   }

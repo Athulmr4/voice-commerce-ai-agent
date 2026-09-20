@@ -6,22 +6,22 @@
 Voice-first e-commerce assistant: voice → STT (browser, Phase 1) → conversation + keyword intent → mock commerce tools → voice-optimized reply → TTS (browser).
 
 ## 2. Problem Statement
-Customers prefer speaking (incl. Hinglish) over typing filters. LLM must understand intent but never invent price/inventory — backend is authoritative.
+Customers prefer speaking over typing filters. LLM must understand intent but never invent price/inventory — backend is authoritative.
 
 ## 3. Features (Phase 1 done)
 - [x] Product search API (category, price, color, brand, text)
 - [x] Product details + inventory endpoints
 - [x] Conversations with session context across turns (merged entities + last-10-turn history)
 - [x] LLM integration: `LLMProvider` seam — `GeminiProvider` (`gemini-1.5-flash`, JSON-mode intent extraction + voice replies) when `GOOGLE_API_KEY` is set, deterministic `KeywordProvider` fallback otherwise/offline
-- [x] Modular prompts: `prompts/system.prompt.ts` (identity + never-invent/never-calculate rules) + `prompts/voice.prompt.ts` (short, 1 question, Hinglish-aware, TTS-optimized) + `EXTRACTION_PROMPT`
+- [x] Modular prompts: `prompts/system.prompt.ts` (identity + never-invent/never-calculate rules) + `prompts/voice.prompt.ts` (short, 1 question, English-only, TTS-optimized) + `EXTRACTION_PROMPT`
 - [x] Full tool-calling: `tools/tools.ts` registry (`searchProducts`, `getProductDetails`, `checkInventory`, `calculatePrice`, `getOrderStatus`), all Zod-validated; Gemini picks tool+args via `decideTool()` + `GEMINI_TOOL_DECLARATIONS` (parity test prevents drift), registry executes
 - [x] Deterministic pricing service: subtotal/discount/shipping/total, `SUMMER10` = 10%, flat ₹100 shipping (free over ₹20,000); spec example verified: 5998 − 599.8 + 100 = 5498.2. LLM never computes prices.
 - [x] Orders service + `GET /api/orders/:id`; `POST /api/pricing/calculate` with 400/404 error codes (`INVALID_DISCOUNT`, `INVALID_PRODUCT`, `INVALID_QUANTITY`)
 - [x] Variable localization service: `renderTemplate('Hi {{customer_name}}…')` + `formatINR`, used by voice replies; reports missing vars
 - [x] Voice endpoints: `POST /api/voice/transcribe` (cloud STT or honest 501 → browser fallback) + `POST /api/voice/respond` (full pipeline, auto-creates conversations, TTS-optimized `voiceText`, per-turn `latency`); conversation logic extracted to `services/conversationService.ts` shared by both routes
-- [x] TTS optimizer: spoken currency (EN/Hinglish), strips markdown/links/emoji/symbols, ≤3 sentences / 60 words; per-message latency chips in UI (stt/llm/tool/tts/total)
-- [x] Spoken details flow: `product_details` intent + affirmative follow-ups ("Haan batao" → `getProductDetails` of last offered item, 2-sentence spoken summary, no repeats); stale-product guard when category switches mid-conversation
-- [x] Honest stock turns: out-of-stock sizes (e.g. P100 size 10) get clear Hinglish/English replies with alternatives
+- [x] TTS optimizer: spoken currency (English), strips markdown/links/emoji/symbols, ≤3 sentences / 60 words; per-message latency chips in UI (stt/llm/tool/tts/total)
+- [x] Spoken details flow: `product_details` intent + affirmative follow-ups ("tell me more" → `getProductDetails` of last offered item, 2-sentence spoken summary, no repeats); stale-product guard when category switches mid-conversation
+- [x] Honest stock turns: out-of-stock sizes (e.g. P100 size 10) get clear English replies with alternatives
 - [x] Observability: PII-free `voice_turn` structured logs (`conversation_id, intent, tool_called, *_latency_ms, success`) + in-memory rolling stats at `GET /api/voice/stats` (avg/p50/p95 per stage, by-tool counts)
 - [x] Shopify seam: extended `CommerceProvider` (orders/customers/discounts); pricing + orders + discount-matching now read through the provider; real `ShopifyProvider` (Admin REST, see §12) auto-selected on credentials, mock otherwise
 - [x] Production quality: `x-api-key` gate on ops endpoints, Dockerfiles + compose (client nginx + server + mysql), CI workflow, `trust proxy`, per-route voice quota, security audit (§14)
@@ -37,7 +37,7 @@ flowchart LR
 ```
 
 ## 5. Voice Pipeline (Phase 4)
-Browser `SpeechRecognition (hi-IN)` → `POST /api/voice/respond {text, conversationId?, sttLatencyMs?}` → shared conversation pipeline → `optimizeForSpeech()` → `speechSynthesis` speaks `voiceText`. `POST /api/voice/transcribe {audioBase64}` handles cloud STT when `STT_PROVIDER=deepgram|whisper` + key is set; otherwise 501 `{fallback: 'browser-stt'}`. Provider seams: `services/speech/` — `STTProvider`/`TTSProvider` interfaces, `getSTTProvider()`/`getTTSProvider()` factories (`Unavailable`/`Browser` default, `Deepgram`/`Whisper`/`ElevenLabs` real-HTTP impls, live-untested without keys). Every turn returns `latency: {sttMs, llmMs, toolMs, ttsMs, totalMs}`, rendered under each assistant message.
+Browser `SpeechRecognition (en-IN)` → `POST /api/voice/respond {text, conversationId?, sttLatencyMs?}` → shared conversation pipeline → `optimizeForSpeech()` → `speechSynthesis` speaks `voiceText`. `POST /api/voice/transcribe {audioBase64}` handles cloud STT when `STT_PROVIDER=deepgram|whisper` + key is set; otherwise 501 `{fallback: 'browser-stt'}`. Provider seams: `services/speech/` — `STTProvider`/`TTSProvider` interfaces, `getSTTProvider()`/`getTTSProvider()` factories (`Unavailable`/`Browser` default, `Deepgram`/`Whisper`/`ElevenLabs` real-HTTP impls, live-untested without keys). Every turn returns `latency: {sttMs, llmMs, toolMs, ttsMs, totalMs}`, rendered under each assistant message.
 
 ## 6. Tech Stack
 Client: React 18 + TS + Vite. Server: Node + Express + TS, Zod, Helmet, CORS, rate-limit, Pino. DB: SQLite (`better-sqlite3`, default) / MySQL 8 (`mysql2`, `DB_PROVIDER=mysql`). Tests: Vitest + Supertest.
@@ -65,7 +65,7 @@ Client: React 18 + TS + Vite. Server: Node + Express + TS, Zod, Helmet, CORS, ra
 `tools/tools.ts` is the single registry: Zod schema + `execute` per tool, invoked by both the keyword fallback router and Gemini `decideTool()` function-calling (`tools/geminiDeclarations.ts`, parity-tested). Flow: user → LLM (picks tool+args) → registry (validates + executes against commerce/pricing/orders services) → DB → LLM (phrases) → voice reply. Business data never originates from the LLM.
 
 ## 11. Prompt Engineering
-`server/src/prompts/system.prompt.ts` (identity, LLM owns intent/entities/context/replies; backend owns all business data) + `server/src/prompts/voice.prompt.ts` (`VOICE_PROMPT`: ≤3 sentences, one question, spoken currency, max 3 options cheapest-first; `EXTRACTION_PROMPT`: strict JSON schema with Hinglish examples). Without a key, deterministic Hinglish/English templates produce the same shape.
+`server/src/prompts/system.prompt.ts` (identity, LLM owns intent/entities/context/replies; backend owns all business data) + `server/src/prompts/voice.prompt.ts` (`VOICE_PROMPT`: ≤3 sentences, one question, spoken currency, max 3 options cheapest-first; `EXTRACTION_PROMPT`: strict JSON schema with English examples). Without a key, deterministic English templates produce the same shape.
 
 ## 12. Shopify Integration
 `CommerceService` → `CommerceProvider` interface (`searchProducts`, `getProduct`, `getInventory`, `getOrder`, `getCustomer`, `getDiscount`) with two implementations:
@@ -85,7 +85,7 @@ Client: React 18 + TS + Vite. Server: Node + Express + TS, Zod, Helmet, CORS, ra
 Setup: create a Shopify dev store → Apps → custom app with `read_products`, `read_inventory`, `read_orders`, `read_customers`, `read_discounts` → set `SHOPIFY_STORE_URL=https://<store>.myshopify.com`, `SHOPIFY_ACCESS_TOKEN`, `SHOPIFY_API_VERSION=2024-10`. Auth failures surface as `SHOPIFY_AUTH` (token never logged). Live-untested without store credentials — `tests/shopify.test.ts` covers mapping, filtering, and error paths against a stubbed API. Honest status: default install uses the mock provider.
 
 ## 13. STT/TTS Integration
-Browser-first: mic → Web Speech API (`hi-IN`), replies via `speechSynthesis` speaking server-optimized `voiceText`. Server seams in `services/speech/`: `STTProvider` (Deepgram Nova / Whisper, selected by `STT_PROVIDER` + key) and `TTSProvider` (ElevenLabs multilingual, `TTS_PROVIDER=elevenlabs` + key). `optimizeForSpeech()` is deterministic and unit-tested: spoken currency (₹2,499 → "2,499 rupees"/"rupaye"), strips markdown/links/emoji, ≤3 sentences / 60 words. Set `STT_PROVIDER`/`TTS_PROVIDER` + keys in `.env` (see `.env.example`); without keys the app runs fully on browser voice.
+Browser-first: mic → Web Speech API (`en-IN`), replies via `speechSynthesis` speaking server-optimized `voiceText`. Server seams in `services/speech/`: `STTProvider` (Deepgram Nova / Whisper, selected by `STT_PROVIDER` + key) and `TTSProvider` (ElevenLabs multilingual, `TTS_PROVIDER=elevenlabs` + key). `optimizeForSpeech()` is deterministic and unit-tested: spoken currency (₹2,499 → "2,499 rupees"), strips markdown/links/emoji, ≤3 sentences / 60 words. Set `STT_PROVIDER`/`TTS_PROVIDER` + keys in `.env` (see `.env.example`); without keys the app runs fully on browser voice.
 
 ## 14. Security
 Helmet headers, CORS allowlist (`CORS_ORIGIN`), global rate limit (120 req/min) + stricter voice quota (60 req/min, audio/LLM turns are expensive), `trust proxy` for accurate client IPs behind nginx, Zod validation on every input (message text ≤2000 chars, audio ≤2.5MB base64, JSON body ≤2MB), generic voice-safe error messages (no stack traces), PII-free logs, secrets only via env (`.env` never committed, `.env.example` documents all keys). Ops endpoints (`GET /api/voice/stats`) require `x-api-key` when `API_KEY` is set; demo endpoints stay open for local use. CI (`.github/workflows/ci.yml`) runs lint + build + tests on every push/PR.
@@ -111,7 +111,7 @@ Docker (needs Docker Engine; not verified on machines without it):
 ```bash
 docker compose up --build  # client :8080 (nginx, /api proxied), server :3001
 ```
-Try: "Mujhe running shoes chahiye" → "3000 ke andar, black ones".
+Try: "I need running shoes" → "Under 3000, black ones".
 
 ## 19. Screenshots
 _No screenshots committed — capture from the running app (`npm run dev --workspace=client`, Chrome for mic support): the voice card with mic states, an assistant turn with latency chips (`stt/llm/tool/tts/total`), and product cards. PRs adding `docs/screenshot-*.png` + links here are welcome._
@@ -120,7 +120,7 @@ _No screenshots committed — capture from the running app (`npm run dev --works
 Phase 4: cloud STT/TTS. Phase 5: TTS optimizer + latency dashboard. Phase 6: real Shopify. Phase 7: auth, Docker, CI.
 
 ## Appendix — Verified Phase-2 conversation (no key, keyword fallback)
-`Mujhe running shoes chahiye` → product_search → *"Haan, 3 options mile hain. Sabse affordable ₹1,799 ka hai…"*
+`I need running shoes` → product_search → *"I found 3 options. Cheapest is ₹1,799…"*
 `3000 ke andar` → context merged (category kept) → same 3 options under ₹3,000
 `Is it available in size 9?` → checkInventory → *"Yes, it's available — 8 in stock…"*
 `Where is my order KW12345?` → getOrderStatus → *"Your order has been shipped…"*

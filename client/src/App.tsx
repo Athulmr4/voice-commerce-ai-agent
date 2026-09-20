@@ -68,7 +68,7 @@ export function App() {
     }
     const rec = new SR();
     recogRef.current = rec;
-    rec.lang = 'hi-IN';
+    rec.lang = 'en-IN';
     setState('Listening...');
     listenStart.current = performance.now();
     rec.onresult = (e: any) => {
@@ -103,10 +103,10 @@ export function App() {
       {error && <div className="card">⚠️ {error}</div>}
       <div className="card row">
         <button className={`mic ${state === 'Listening...' ? 'listening' : ''}`} onClick={toggleMic} aria-label="speak">🎙️</button>
-        <input type="text" placeholder="Type or speak… e.g. Mujhe running shoes chahiye, 3000 ke andar" value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void send(input); }} />
+        <input type="text" placeholder="Type or speak… e.g. Show me running shoes under 3000" value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void send(input); }} />
         <button className="send" onClick={() => void send(input)}>Send</button>
       </div>
-      <div className="state">Press mic to speak. Hinglish supported.</div>
+      <div className="state">Press mic to speak in English.</div>
     </div>
   );
 }

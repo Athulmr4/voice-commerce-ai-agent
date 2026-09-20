@@ -28,7 +28,6 @@ voiceRouter.get('/stats', requireApiKey, (_req, res) => {
 const transcribeSchema = z.object({
   audioBase64: z.string().min(1).max(2_500_000),
   mimeType: z.string().max(100).optional(),
-  language: z.string().max(20).optional(),
 });
 
 voiceRouter.post('/transcribe', async (req, res, next) => {
@@ -68,8 +67,7 @@ voiceRouter.post('/respond', async (req, res, next) => {
     const result = await processMessage(cid, text);
 
     const tTts = Date.now();
-    const language = result.meta.language === 'hinglish' ? 'hinglish' as const : 'english' as const;
-    const synth = await getTTSProvider().synthesize({ text: result.reply, language, voice });
+    const synth = await getTTSProvider().synthesize({ text: result.reply, voice });
     const ttsLatencyMs = Date.now() - tTts;
     const totalMs = Date.now() - t0;
 

@@ -2,10 +2,7 @@ import type { LLMExtraction, LLMProvider, SessionContext } from './LLMProvider.j
 
 // Deterministic fallback used when no LLM key is configured or the LLM call fails.
 // Also serves as the baseline for tests. Keeps the app runnable offline.
-export function detectHinglish(text: string): boolean {
-  return /mujhe|chahiye|ke andar|kitna|kitne|haan|batao|suna|sunao|aur|\bhain?\b|\bmein\b|\bnahi\b|\bka\b|\bki\b|\bko\b|\bkya\b/i.test(text);
-}
-
+// English-only: all requests are treated as English, all replies are English.
 export function extractFilters(
   text: string,
   prev: SessionContext,
@@ -17,8 +14,8 @@ export function extractFilters(
   else if (/laptop/.test(t)) next.category = 'laptop';
   else if (/shoe/.test(t) && !next.category) next.category = 'running shoes';
   const m =
-    t.match(/(?:under|below|within|around|bachat|andar)\D{0,10}(\d[\d,]*)/) ??
-    t.match(/(\d[\d,]*)\s*(?:ke andar|tak|rupees|rs|inr)/);
+    t.match(/(?:under|below|within|around)\D{0,10}(\d[\d,]*)/) ??
+    t.match(/(\d[\d,]*)\s*(?:rupees|rs|inr)/);
   if (m) next.maxPrice = Number(m[1].replace(/,/g, ''));
   for (const c of ['black', 'white', 'red', 'blue', 'silver', 'grey', 'gray']) {
     if (t.includes(c)) { next.color = c === 'gray' ? 'grey' : c; break; }
@@ -39,11 +36,11 @@ export class KeywordProvider implements LLMProvider {
     const merged = extractFilters(text, context);
     let intent: LLMExtraction['intent'] = 'product_search';
     if (order || /order|status|where.*(order|package)|deliver/.test(t)) intent = 'order_status';
-    else if (/detail|specification|about (this|that|it)|batao|sunao|tell me more/.test(t)) intent = 'product_details';
-    else if (/^(haan|ha+|yes|yeah|yep|ok|sure|karo|bolo)\b/.test(t) && context.lastProductIds?.length) intent = 'product_details';
+    else if (/detail|specification|about (this|that|it)|tell me more/.test(t)) intent = 'product_details';
+    else if (/^(yes|yeah|yep|ok|sure)\b/.test(t) && context.lastProductIds?.length) intent = 'product_details';
     else if (/available|stock|size/.test(t) && (merged.category || merged.size)) intent = 'inventory_check';
     else if (/price|total|cost|discount|cheap/.test(t)) intent = 'price_check';
-    else if (/^(hi|hello|hey|namaste|thanks|thank you|bye)\b/.test(t)) intent = 'chitchat';
+    else if (/^(hi|hello|hey|thanks|thank you|bye)\b/.test(t)) intent = 'chitchat';
     else if (!merged.category && merged.maxPrice == null) intent = 'unclear';
     return {
       intent,
@@ -58,7 +55,6 @@ export class KeywordProvider implements LLMProvider {
         orderId: order?.[1] ?? null,
         quantity: null,
       },
-      language: detectHinglish(text) ? 'hinglish' : 'english',
     };
   }
   async reply(): Promise<string> {

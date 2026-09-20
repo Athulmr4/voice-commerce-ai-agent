@@ -1,14 +1,10 @@
-export type SpokenLanguage = 'hinglish' | 'english';
-
 export interface TranscribeInput {
   audioBase64: string;
   mimeType?: string;
-  language?: string;
 }
 
 export interface Transcription {
   text: string;
-  language: SpokenLanguage;
   confidence?: number;
 }
 
@@ -29,7 +25,6 @@ export interface STTProvider {
 
 export interface SynthesizeInput {
   text: string;
-  language: SpokenLanguage;
   voice?: string;
 }
 
